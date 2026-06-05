@@ -56,6 +56,7 @@ class TenantRecord {
   final String paymentSummary;
   final String notes;
   final String emergencyContact;
+  final String paymentCode;
 
   const TenantRecord({
     this.id,
@@ -74,6 +75,7 @@ class TenantRecord {
     required this.paymentSummary,
     required this.notes,
     required this.emergencyContact,
+    this.paymentCode = '',
   });
 
   factory TenantRecord.fromMap(Map<String, dynamic> map) {
@@ -102,6 +104,7 @@ class TenantRecord {
       paymentSummary: map['paymentSummary']?.toString() ?? '',
       notes: map['notes']?.toString() ?? '',
       emergencyContact: map['emergencyContact']?.toString() ?? '',
+      paymentCode: map['paymentCode']?.toString() ?? '',
     );
   }
 
@@ -122,6 +125,7 @@ class TenantRecord {
     String? paymentSummary,
     String? notes,
     String? emergencyContact,
+    String? paymentCode,
   }) {
     return TenantRecord(
       id: id ?? this.id,
@@ -140,6 +144,7 @@ class TenantRecord {
       paymentSummary: paymentSummary ?? this.paymentSummary,
       notes: notes ?? this.notes,
       emergencyContact: emergencyContact ?? this.emergencyContact,
+      paymentCode: paymentCode ?? this.paymentCode,
     );
   }
 
@@ -183,6 +188,7 @@ class TenantRecord {
     'paymentSummary': paymentSummary,
     'notes': notes,
     'emergencyContact': emergencyContact,
+    'paymentCode': paymentCode,
   };
 }
 

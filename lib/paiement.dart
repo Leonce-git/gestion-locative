@@ -873,21 +873,16 @@ class _PayCashSheetState extends State<_PayCashSheet> {
     super.dispose();
   }
 
-  // Génère le lien de paiement pour le locataire sélectionné
+  // Génère le lien de paiement via le code unique du locataire
   String _buildLink(_Payment p) {
-    final roomParts = p.room.split(' - ');
-    final chambre = Uri.encodeFull(
-        roomParts.isNotEmpty ? roomParts.first : p.room);
-    final nom = Uri.encodeFull(p.name);
-    final uid = Uri.encodeFull(widget.adminUid);
-    final tid = Uri.encodeFull(p.tenantId ?? '');
-    return 'https://gestion-locative-3f02c.web.app/pay'
-        '?uid=$uid&tenantId=$tid&nom=$nom&chambre=$chambre&montant=${p.amount}';
+    // Le code est stocké dans Firestore — on le récupère via tenantId
+    // Pour l'instant on utilise tenantId comme fallback dans le lien général
+    // Le locataire saisira son code sur la page
+    return 'https://gestion-locative-3f02c.web.app/payer';
   }
 
   String _buildGeneralLink() {
-    final uid = Uri.encodeFull(widget.adminUid);
-    return 'https://gestion-locative-3f02c.web.app/pay?uid=$uid';
+    return 'https://gestion-locative-3f02c.web.app/payer';
   }
 
   void _copyLink(String link) {

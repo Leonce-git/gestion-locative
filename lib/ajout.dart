@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:gestion_locative/app_background.dart';
 import 'package:gestion_locative/locataire.dart';
+import 'package:gestion_locative/payment_code_service.dart';
 import 'package:gestion_locative/scan.dart';
 
 class _Property {
@@ -174,6 +175,13 @@ class _AjoutState extends State<Ajout> {
             .doc(user.uid)
             .collection('locataires')
             .add({...tenantData, 'createdAt': FieldValue.serverTimestamp()});
+
+        // Génère et enregistre le code de paiement unique (depuis origin/main)
+        await PaymentCodeService.createForTenant(
+          uid: user.uid,
+          tenantId: docRef.id,
+          tenantName: name,
+        );
 
         // ➜ Sauvegarder l'ID pour rattacher les documents
         tenantId = docRef.id;

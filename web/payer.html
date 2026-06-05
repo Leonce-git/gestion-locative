@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paiement de Loyer</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+    body{background:#F0F4FA;min-height:100vh}
+    .header{background:linear-gradient(135deg,#102A43,#1F6FEB,#63B3ED);padding:40px 24px 28px;color:#fff}
+    .header-icon{background:rgba(255,255,255,.15);border-radius:12px;display:inline-flex;padding:10px;margin-bottom:16px}
+    .header h1{font-size:24px;font-weight:900;margin-bottom:4px}
+    .header p{font-size:13px;color:#DDEAF8}
+    .body{padding:24px 20px 60px;max-width:520px;margin:0 auto}
+    .card{background:#fff;border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 4px 16px rgba(19,34,56,.07)}
+    label{display:block;font-size:13px;font-weight:800;color:#132238;margin-bottom:8px}
+    .code-wrap{display:flex;gap:10px;align-items:stretch}
+    .code-input{flex:1;font-size:28px;font-weight:900;letter-spacing:8px;text-align:center;text-transform:uppercase;border:none;outline:none;background:#fff;color:#132238;border-radius:14px;padding:16px;box-shadow:0 4px 12px rgba(31,111,235,.1)}
+    .code-input::placeholder{color:rgba(155,170,184,.5);font-size:22px;letter-spacing:5px}
+    .btn-search{width:54px;height:54px;background:#1F6FEB;border:none;border-radius:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 10px rgba(31,111,235,.35)}
+    .btn-search svg{width:24px;height:24px;fill:none;stroke:#fff;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+    .hint{color:#9BAAB8;font-size:12px;margin-top:8px;text-align:center}
+    .error-box{background:#FFEBE5;border:1px solid #F5B5A0;border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:8px;margin-top:10px}
+    .error-box span{color:#993C1D;font-size:13px}
+    .tenant-card{background:#fff;border-radius:20px;padding:18px;border:1.5px solid rgba(31,111,235,.25);box-shadow:0 6px 16px rgba(31,111,235,.07);margin-bottom:16px}
+    .tenant-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+    .avatar{width:54px;height:54px;background:#132238;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:#fff;flex-shrink:0}
+    .tenant-name{font-size:18px;font-weight:900;color:#132238}
+    .tenant-sub{font-size:12px;color:#607086;margin-top:3px}
+    .badge{padding:5px 10px;border-radius:20px;font-size:11px;font-weight:800;display:inline-block}
+    .badge-ok{background:#F0FAE4;border:1px solid #C0DD97;color:#3B6D11}
+    .badge-late{background:#FFEBE5;border:1px solid #F5B5A0;color:#993C1D}
+    .divider{border:none;border-top:1px solid #EEF3F8;margin:14px 0}
+    .rent-row{display:flex;justify-content:space-between;align-items:center}
+    .rent-label{font-size:13px;color:#607086}
+    .rent-amount{font-size:16px;font-weight:900;color:#132238;display:flex;align-items:center;gap:5px}
+    .rent-amount span{color:#1F6FEB;font-size:14px}
+    .section-label{font-size:14px;font-weight:800;color:#132238;margin-bottom:10px}
+    .months-card{background:#fff;border-radius:16px;padding:16px 20px;box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .btn-round{width:46px;height:46px;background:#1F6FEB;border:none;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;font-weight:900;user-select:none}
+    .months-display{text-align:center}
+    .months-num{font-size:40px;font-weight:900;color:#132238;line-height:1}
+    .months-text{font-size:12px;color:#607086;margin-top:2px}
+    .total-card{background:linear-gradient(135deg,#102A43,#1F6FEB);border-radius:16px;padding:18px;display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+    .total-left p{font-size:13px;color:#DDEAF8;margin-bottom:3px}
+    .total-left small{font-size:11px;color:rgba(255,255,255,.5)}
+    .total-amount{font-size:26px;font-weight:900;color:#fff}
+    .method-card{background:#fff;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;margin-bottom:10px;cursor:pointer;border:1.5px solid #E0E8F0;box-shadow:0 2px 6px rgba(0,0,0,.04);transition:all .15s}
+    .method-card.selected{border-width:2px}
+    .method-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+    .method-label{font-size:15px;font-weight:700;flex:1}
+    .check-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+    .btn-pay{width:100%;padding:18px;background:#149954;border:none;border-radius:16px;color:#fff;font-size:16px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;margin-top:28px;letter-spacing:.5px;transition:opacity .2s}
+    .btn-pay:disabled{background:#B0BEC5;cursor:not-allowed}
+    .btn-pay svg{width:18px;height:18px;fill:none;stroke:#fff;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+    .payment-screen{display:none}
+    .phone-field{width:100%;border:none;outline:none;background:#F5F8FF;border-radius:12px;padding:14px;font-size:20px;font-weight:700;color:#132238}
+    .phone-field:focus{box-shadow:0 0 0 1.5px var(--method-color,#1F6FEB)}
+    .phone-wrap{position:relative}
+    .phone-prefix{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:18px;font-weight:700;color:#132238;pointer-events:none}
+    .phone-field{padding-left:80px}
+    .info-box{background:#FFF8E7;border-radius:10px;padding:12px;display:flex;gap:8px;margin-top:12px}
+    .info-box p{font-size:11px;color:#7A5C00}
+    .bank-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F0F4FA;font-size:13px}
+    .bank-row span:first-child{color:#607086}
+    .bank-row span:last-child{font-weight:700;color:#132238}
+    .btn-copy{width:100%;padding:10px;background:#F0F4FA;border:none;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;color:#607086;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:6px}
+    .processing{display:none;text-align:center;padding:60px 20px}
+    .spinner{width:64px;height:64px;border:4px solid #E0E8F0;border-top-color:#1F6FEB;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 24px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .success{display:none;text-align:center;padding:40px 20px}
+    .success-icon{width:80px;height:80px;background:rgba(59,109,17,.1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:48px;margin:0 auto 24px}
+    .success h2{font-size:26px;font-weight:900;color:#132238;margin-bottom:10px}
+    .success-amount{font-size:34px;font-weight:900;color:#1F6FEB;margin-bottom:6px}
+    .success p{color:#607086;font-size:14px;margin-bottom:24px}
+    .success-info{background:#F0FAE4;border:1px solid #C0DD97;border-radius:16px;padding:16px;text-align:left;display:flex;gap:10px}
+    .success-info p{font-size:13px;color:#3B6D11}
+    .btn-receipt{margin-top:16px;width:100%;padding:12px;background:transparent;border:1.5px solid #1F6FEB;border-radius:12px;color:#1F6FEB;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+    .hidden{display:none!important}
+    .loading-pulse{animation:pulse 1.5s ease-in-out infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+    .back-link{font-size:12px;color:#607086;cursor:pointer;text-align:center;margin-top:12px;background:none;border:none;display:block;width:100%}
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-icon">
+    <svg width="26" height="26" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+  </div>
+  <h1 id="headerTitle">Paiement de Loyer</h1>
+  <p id="headerSub">Entrez votre code unique</p>
+</div>
+
+<div class="body">
+
+  <!-- ① SAISIE DU CODE -->
+  <div id="stepCode">
+    <div class="card">
+      <label>Code de paiement</label>
+      <div class="code-wrap">
+        <input id="codeInput" class="code-input" type="text" maxlength="6" placeholder="EX: A3X7KP" autocomplete="off" spellcheck="false"/>
+        <button class="btn-search" onclick="lookup()" id="searchBtn">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+      </div>
+      <p class="hint">Votre code vous a été transmis par votre propriétaire.</p>
+      <div id="codeError" class="error-box hidden">
+        <span>⚠</span><span id="codeErrorMsg">Code introuvable.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② DOSSIER + FORMULAIRE PAIEMENT -->
+  <div id="stepInfo" class="hidden">
+    <!-- Carte locataire -->
+    <div class="tenant-card">
+      <div class="tenant-head">
+        <div class="avatar" id="tenantAvatar">?</div>
+        <div style="flex:1">
+          <div class="tenant-name" id="tenantName">-</div>
+          <div class="tenant-sub" id="tenantSub">-</div>
+        </div>
+        <span class="badge badge-ok" id="tenantBadge">À jour</span>
+      </div>
+      <hr class="divider">
+      <div class="rent-row">
+        <span class="rent-label">Loyer mensuel</span>
+        <span class="rent-amount"><span>✓</span><span id="tenantRent">-</span></span>
+      </div>
+    </div>
+
+    <!-- Nombre de mois -->
+    <p class="section-label">Nombre de mois à payer</p>
+    <div class="months-card">
+      <button class="btn-round" onclick="changeMonths(-1)">−</button>
+      <div class="months-display">
+        <div class="months-num" id="monthsNum">1</div>
+        <div class="months-text">mois</div>
+      </div>
+      <button class="btn-round" onclick="changeMonths(1)">+</button>
+    </div>
+
+    <!-- Total -->
+    <div class="total-card">
+      <div class="total-left">
+        <p>Total à payer</p>
+        <small id="totalFormula">- × 1 mois</small>
+      </div>
+      <div class="total-amount" id="totalAmount">0 FCFA</div>
+    </div>
+
+    <!-- Modes de paiement -->
+    <p class="section-label">Mode de paiement</p>
+
+    <div class="method-card" id="m_MTN" onclick="selectMethod('MTN','#FFCC00','#132238')" style="--method-color:#FFCC00">
+      <div class="method-icon" style="background:#FFCC00">📱</div>
+      <span class="method-label" style="color:#132238">MTN MoMo</span>
+      <div class="check-icon" id="chk_MTN" style="background:#FFCC00;color:#132238;display:none">✓</div>
+    </div>
+
+    <div class="method-card" id="m_Moov" onclick="selectMethod('Moov','#003087','#fff')" style="--method-color:#003087">
+      <div class="method-icon" style="background:#003087;color:#fff">📱</div>
+      <span class="method-label">Moov Money</span>
+      <div class="check-icon" id="chk_Moov" style="background:#003087;color:#fff;display:none">✓</div>
+    </div>
+
+    <div class="method-card" id="m_Celtis" onclick="selectMethod('Celtis','#00A86B','#fff')" style="--method-color:#00A86B">
+      <div class="method-icon" style="background:#00A86B;color:#fff">📱</div>
+      <span class="method-label">Celtis Mobile</span>
+      <div class="check-icon" id="chk_Celtis" style="background:#00A86B;color:#fff;display:none">✓</div>
+    </div>
+
+    <div class="method-card" id="m_Banque" onclick="selectMethod('Banque','#132238','#fff')" style="--method-color:#132238">
+      <div class="method-icon" style="background:#132238;color:#fff">🏦</div>
+      <span class="method-label">Virement bancaire</span>
+      <div class="check-icon" id="chk_Banque" style="background:#132238;color:#fff;display:none">✓</div>
+    </div>
+
+    <button class="btn-pay" id="btnPay" disabled onclick="startPayment()">
+      <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      PAYER MAINTENANT
+    </button>
+    <button class="back-link" onclick="resetCode()">Changer de code</button>
+  </div>
+
+  <!-- ③ INTERFACE PAIEMENT MOBILE MONEY -->
+  <div id="stepMobile" class="hidden">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+        <div class="method-icon" id="mobileMethodIcon" style="background:#FFCC00;width:40px;height:40px;border-radius:10px;font-size:20px">📱</div>
+        <strong id="mobileMethodLabel" style="font-size:16px;font-weight:900;color:#132238">MTN MoMo</strong>
+      </div>
+      <div style="background:rgba(31,111,235,.08);border-radius:10px;padding:12px;margin-bottom:16px;text-align:center">
+        <div style="font-size:13px;color:#607086">Montant à payer</div>
+        <div style="font-size:24px;font-weight:900;color:#132238" id="mobileTotal">0 FCFA</div>
+      </div>
+      <label>Numéro de téléphone</label>
+      <div class="phone-wrap">
+        <span class="phone-prefix">+229</span>
+        <input type="tel" id="phoneInput" class="phone-field" placeholder="97 XX XX XX" maxlength="10"/>
+      </div>
+      <p id="phoneError" class="hidden" style="color:#993C1D;font-size:12px;margin-top:6px">Numéro invalide.</p>
+      <div class="info-box">
+        <span>ℹ️</span>
+        <p>Vous recevrez une notification sur votre téléphone pour confirmer le paiement.</p>
+      </div>
+    </div>
+    <button class="btn-pay" onclick="confirmPayment()">Confirmer le paiement</button>
+    <button class="back-link" onclick="goBack()">← Retour</button>
+  </div>
+
+  <!-- ③ INTERFACE VIREMENT BANCAIRE -->
+  <div id="stepBank" class="hidden">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <div class="method-icon" style="background:#132238;color:#fff;width:40px;height:40px;border-radius:10px;font-size:20px">🏦</div>
+        <strong style="font-size:16px;font-weight:900;color:#132238">Coordonnées bancaires</strong>
+      </div>
+      <div class="bank-row"><span>Banque</span><span>BOA Bénin</span></div>
+      <div class="bank-row"><span>Titulaire</span><span>Gestion Locative</span></div>
+      <div class="bank-row"><span>N° Compte</span><span>BJ0610001234567890123</span></div>
+      <div class="bank-row"><span>Référence</span><span id="bankRef">-</span></div>
+      <div class="bank-row"><span>Montant</span><span id="bankAmount">-</span></div>
+      <button class="btn-copy" onclick="copyBank()">📋 Copier les coordonnées</button>
+    </div>
+    <button class="btn-pay" onclick="confirmPayment()">J'ai effectué le virement</button>
+    <button class="back-link" onclick="goBack()">← Retour</button>
+  </div>
+
+  <!-- ④ TRAITEMENT -->
+  <div id="stepProcessing" class="hidden processing" style="display:none">
+    <div class="spinner"></div>
+    <h2 style="font-size:20px;font-weight:900;color:#132238;margin-bottom:8px">Traitement en cours…</h2>
+    <p style="color:#9BAAB8;font-size:13px">Ne fermez pas cette page.</p>
+  </div>
+
+  <!-- ⑤ SUCCÈS -->
+  <div id="stepSuccess" class="hidden success" style="display:none">
+    <div class="success-icon">✅</div>
+    <h2>Paiement confirmé !</h2>
+    <div class="success-amount" id="successAmount">0 FCFA</div>
+    <p id="successDetails">-</p>
+    <div class="success-info">
+      <span>✅</span>
+      <p>Votre paiement a été enregistré. Votre propriétaire sera notifié automatiquement.</p>
+    </div>
+    <button class="btn-receipt" onclick="copyReceipt()">📋 Copier le reçu</button>
+  </div>
+
+</div><!-- /body -->
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, addDoc, setDoc, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyDPrUSd_N_lNTX-9IneRj0BYiHS6Prf74k",
+  authDomain: "gestion-locative-3f02c.firebaseapp.com",
+  projectId: "gestion-locative-3f02c",
+  storageBucket: "gestion-locative-3f02c.firebasestorage.app",
+  messagingSenderId: "822380501516",
+  appId: "1:822380501516:web:9272f837c6757517c76c29"
+});
+const db = getFirestore(app);
+
+// ── État global ──────────────────────────────────────
+let tenantData = null;
+let monthlyRent = 0;
+let months = 1;
+let selectedMethod = null;
+let methodColor = '#1F6FEB';
+let methodTextColor = '#fff';
+
+// ── Formatteur ───────────────────────────────────────
+function fmt(n){
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+}
+
+// ── Récupérer le code depuis l'URL ──────────────────
+const urlParams = new URLSearchParams(window.location.search);
+const urlCode = urlParams.get('code') || '';
+if(urlCode){
+  document.getElementById('codeInput').value = urlCode.toUpperCase();
+  window.addEventListener('DOMContentLoaded', () => setTimeout(lookup, 300));
+}
+
+// ── Recherche par code ───────────────────────────────
+window.lookup = async function(){
+  const code = document.getElementById('codeInput').value.trim().toUpperCase();
+  const errBox = document.getElementById('codeError');
+  errBox.classList.add('hidden');
+
+  if(code.length !== 6){
+    document.getElementById('codeErrorMsg').textContent = 'Le code doit contenir 6 caractères.';
+    errBox.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('searchBtn');
+  btn.innerHTML = '<div style="width:20px;height:20px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite"></div>';
+  btn.disabled = true;
+
+  try {
+    const codeSnap = await getDoc(doc(db,'payment_codes', code));
+    if(!codeSnap.exists()){
+      throw new Error('Code introuvable.');
+    }
+    const meta = codeSnap.data();
+    const uid = meta.uid;
+    const tenantId = meta.tenantId;
+
+    const tenantSnap = await getDoc(doc(db,'users',uid,'locataires',tenantId));
+    if(!tenantSnap.exists()){
+      throw new Error('Dossier introuvable.');
+    }
+
+    tenantData = { uid, tenantId, paymentCode: code, ...tenantSnap.data() };
+    const amountRaw = (tenantData.rentAmount||'0').replace(/[^0-9]/g,'');
+    monthlyRent = parseInt(amountRaw) || 0;
+    const isLate = tenantData.statusLabel === 'Retard';
+
+    // Remplir la carte locataire
+    const name = tenantData.name || '';
+    document.getElementById('tenantAvatar').textContent = name ? name[0].toUpperCase() : '?';
+    document.getElementById('tenantName').textContent = name;
+    const room = tenantData.roomNumber || '';
+    const prop = tenantData.propertyName || '';
+    document.getElementById('tenantSub').textContent = [room?'Chambre '+room:'', prop].filter(Boolean).join(' · ');
+    const badge = document.getElementById('tenantBadge');
+    badge.textContent = isLate ? 'En retard' : 'À jour';
+    badge.className = 'badge ' + (isLate ? 'badge-late' : 'badge-ok');
+    document.getElementById('tenantRent').textContent = fmt(monthlyRent) + ' FCFA';
+    document.getElementById('headerSub').textContent = 'Code : ' + code;
+
+    updateTotal();
+    show('stepCode','stepInfo');
+  } catch(e){
+    document.getElementById('codeErrorMsg').textContent = e.message || 'Erreur. Réessayez.';
+    errBox.classList.remove('hidden');
+  } finally {
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+    btn.disabled = false;
+  }
+};
+
+// ── Changer le nombre de mois ────────────────────────
+window.changeMonths = function(d){
+  months = Math.max(1, Math.min(12, months + d));
+  document.getElementById('monthsNum').textContent = months;
+  updateTotal();
+};
+
+function updateTotal(){
+  const total = monthlyRent * months;
+  document.getElementById('totalAmount').textContent = fmt(total) + ' FCFA';
+  document.getElementById('totalFormula').textContent = fmt(monthlyRent) + ' × ' + months + ' mois';
+}
+
+// ── Sélectionner le mode de paiement ────────────────
+window.selectMethod = function(method, color, textColor){
+  selectedMethod = method;
+  methodColor = color;
+  methodTextColor = textColor;
+
+  ['MTN','Moov','Celtis','Banque'].forEach(m => {
+    const card = document.getElementById('m_'+m);
+    const chk = document.getElementById('chk_'+m);
+    if(m === method){
+      card.style.background = color;
+      card.style.borderColor = color;
+      card.querySelectorAll('.method-label, .method-icon')[0]?.parentNode?.querySelectorAll('.method-label').forEach(el => el.style.color = textColor);
+      chk.style.display = 'flex';
+    } else {
+      card.style.background = '#fff';
+      card.style.borderColor = '#E0E8F0';
+      card.querySelectorAll('.method-label').forEach(el => el.style.color = '#132238');
+      chk.style.display = 'none';
+    }
+  });
+
+  document.getElementById('btnPay').disabled = false;
+};
+
+// ── Lancer la page de paiement ──────────────────────
+window.startPayment = function(){
+  if(!selectedMethod) return;
+  const total = monthlyRent * months;
+
+  if(selectedMethod === 'Banque'){
+    document.getElementById('bankRef').textContent = tenantData.paymentCode || '';
+    document.getElementById('bankAmount').textContent = fmt(total) + ' FCFA';
+    show('stepInfo','stepBank');
+  } else {
+    document.getElementById('mobileMethodLabel').textContent =
+      selectedMethod === 'MTN' ? 'MTN MoMo' :
+      selectedMethod === 'Moov' ? 'Moov Money' : 'Celtis Mobile';
+    const icon = document.getElementById('mobileMethodIcon');
+    icon.style.background = methodColor;
+    icon.style.color = methodTextColor;
+    document.getElementById('mobileTotal').textContent = fmt(total) + ' FCFA';
+    show('stepInfo','stepMobile');
+  }
+};
+
+// ── Retour ───────────────────────────────────────────
+window.goBack = function(){
+  document.getElementById('stepMobile').classList.add('hidden');
+  document.getElementById('stepBank').classList.add('hidden');
+  document.getElementById('stepInfo').classList.remove('hidden');
+};
+
+// ── Confirmer le paiement (sandbox) ─────────────────
+window.confirmPayment = async function(){
+  if(selectedMethod !== 'Banque'){
+    const phone = document.getElementById('phoneInput').value.trim();
+    const phoneErr = document.getElementById('phoneError');
+    if(phone.length < 8){
+      phoneErr.classList.remove('hidden');
+      return;
+    }
+    phoneErr.classList.add('hidden');
+  }
+
+  // Cacher tout et afficher traitement
+  document.getElementById('stepMobile').classList.add('hidden');
+  document.getElementById('stepBank').classList.add('hidden');
+  const proc = document.getElementById('stepProcessing');
+  proc.style.display = 'block';
+  proc.classList.remove('hidden');
+
+  // Simulation 3 secondes
+  await new Promise(r => setTimeout(r, 3000));
+
+  // Enregistrer dans Firestore
+  try {
+    const total = monthlyRent * months;
+    const uid = tenantData.uid;
+    const tenantId = tenantData.tenantId;
+
+    await addDoc(collection(db,'users',uid,'paiements'), {
+      tenantId,
+      tenantName: tenantData.name || '',
+      amount: total,
+      method: selectedMethod,
+      status: 'paye',
+      monthsCount: months,
+      source: 'lien_partage',
+      paymentCode: tenantData.paymentCode || '',
+      createdAt: serverTimestamp()
+    });
+
+    await setDoc(doc(db,'users',uid,'locataires',tenantId), {
+      statusLabel: 'A jour',
+      balanceLabel: 'Solde a jour',
+      paymentSummary: 'Dernier paiement : ' + fmt(total) + ' FCFA',
+      lastPaymentAt: serverTimestamp()
+    }, { merge: true });
+  } catch(e){
+    console.warn('Firestore write error (sandbox):', e);
+  }
+
+  // Afficher succès
+  proc.style.display = 'none';
+  const total = monthlyRent * months;
+  const methodLabel = selectedMethod==='MTN'?'MTN MoMo':selectedMethod==='Moov'?'Moov Money':selectedMethod==='Celtis'?'Celtis Mobile':'Virement';
+  document.getElementById('successAmount').textContent = fmt(total) + ' FCFA';
+  document.getElementById('successDetails').textContent = (tenantData.name||'') + ' · ' + months + ' mois · ' + methodLabel;
+  const succ = document.getElementById('stepSuccess');
+  succ.style.display = 'block';
+  succ.classList.remove('hidden');
+};
+
+// ── Copier le reçu ───────────────────────────────────
+window.copyReceipt = function(){
+  const total = monthlyRent * months;
+  const methodLabel = selectedMethod==='MTN'?'MTN MoMo':selectedMethod==='Moov'?'Moov Money':selectedMethod==='Celtis'?'Celtis Mobile':'Virement';
+  const text = `REÇU DE PAIEMENT\n─────────────────\nLocataire : ${tenantData.name||''}\nCode : ${tenantData.paymentCode||''}\nMontant : ${fmt(total)} FCFA\nMois payés : ${months}\nMode : ${methodLabel}\n─────────────────`;
+  navigator.clipboard.writeText(text).then(()=>alert('Reçu copié !')).catch(()=>{});
+};
+
+// ── Copier les coordonnées bancaires ────────────────
+window.copyBank = function(){
+  const total = monthlyRent * months;
+  const text = `Banque: BOA Bénin\nTitulaire: Gestion Locative\nN°: BJ0610001234567890123\nRef: ${tenantData.paymentCode||''}\nMontant: ${fmt(total)} FCFA`;
+  navigator.clipboard.writeText(text).then(()=>alert('Copié !')).catch(()=>{});
+};
+
+// ── Réinitialiser ────────────────────────────────────
+window.resetCode = function(){
+  tenantData = null; months = 1; selectedMethod = null;
+  document.getElementById('codeInput').value = '';
+  ['MTN','Moov','Celtis','Banque'].forEach(m=>{
+    document.getElementById('m_'+m).style.background='#fff';
+    document.getElementById('m_'+m).style.borderColor='#E0E8F0';
+    document.getElementById('chk_'+m).style.display='none';
+  });
+  document.getElementById('btnPay').disabled = true;
+  document.getElementById('headerSub').textContent = 'Entrez votre code unique';
+  show('stepInfo','stepCode');
+};
+
+// ── Utilitaire show/hide ─────────────────────────────
+function show(hide, show){
+  document.getElementById(hide).classList.add('hidden');
+  const el = document.getElementById(show);
+  el.classList.remove('hidden');
+  if(el.style.display==='none') el.style.display='block';
+}
+
+// ── Trigger sur Entrée ───────────────────────────────
+document.getElementById('codeInput').addEventListener('keyup', e=>{
+  if(e.key==='Enter') lookup();
+  if(document.getElementById('codeInput').value.length===6) lookup();
+});
+</script>
+</body>
+</html>

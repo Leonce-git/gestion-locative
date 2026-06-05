@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gestion_locative/app_background.dart';
 import 'package:gestion_locative/locataire.dart';
+import 'package:gestion_locative/payment_code_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -26,17 +27,16 @@ class _PayeCashState extends State<PayeCash> {
     super.dispose();
   }
 
-  // ── Génère le lien de paiement unique pour un locataire ──
+  // ── Génère le lien de paiement via code unique ──
   String _paymentLink(TenantRecord tenant) {
-    final nom = Uri.encodeFull(tenant.name);
-    final chambre = Uri.encodeFull(tenant.roomNumber);
-    final montant = tenant.rentAmount.replaceAll(RegExp(r'[^0-9]'), '');
-    final uid = Uri.encodeFull(
-        FirebaseAuth.instance.currentUser?.uid ?? '');
-    final tenantId = Uri.encodeFull(tenant.id ?? '');
-    return 'https://gestion-locative-3f02c.web.app/pay'
-        '?uid=$uid&tenantId=$tenantId&nom=$nom&chambre=$chambre&montant=$montant';
+    final code = tenant.paymentCode;
+    if (code.isNotEmpty) {
+      return 'https://gestion-locative-3f02c.web.app/payer?code=$code';
+    }
+    // Fallback si code pas encore généré
+    return 'https://gestion-locative-3f02c.web.app/payer';
   }
+
 
   void _copyLink(TenantRecord tenant) {
     Clipboard.setData(ClipboardData(text: _paymentLink(tenant)));
@@ -50,11 +50,9 @@ class _PayeCashState extends State<PayeCash> {
     );
   }
 
-  // Lien général (sans locataire pré-sélectionné)
+  // Lien général — le locataire saisira son code sur la page
   String _generalLink() {
-    final uid = Uri.encodeFull(
-        FirebaseAuth.instance.currentUser?.uid ?? '');
-    return 'https://gestion-locative-3f02c.web.app/pay?uid=$uid';
+    return 'https://gestion-locative-3f02c.web.app/payer';
   }
 
   void _copyGeneralLink() {
@@ -297,6 +295,17 @@ class _PayCashBody extends StatelessWidget {
               doc.data() as Map<String, dynamic>,
             ).copyWith(id: doc.id);
           }).toList();
+
+          // Auto-générer les codes manquants pour les locataires existants
+          for (final t in tenants) {
+            if (t.paymentCode.isEmpty && t.id != null) {
+              PaymentCodeService.createForTenant(
+                uid: currentUser.uid,
+                tenantId: t.id!,
+                tenantName: t.name,
+              );
+            }
+          }
         }
 
         // Fallback aperçu local si pas de données
@@ -545,6 +554,27 @@ class _TenantPayCard extends StatelessWidget {
                           style: const TextStyle(
                             color: Color(0xFF607086),
                             fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        // ── Code de paiement ──
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF132238),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            tenant.paymentCode.isNotEmpty
+                                ? 'Code : ${tenant.paymentCode}'
+                                : 'Code en cours…',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.5,
+                            ),
                           ),
                         ),
                       ],

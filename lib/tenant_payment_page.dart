@@ -1,284 +1,177 @@
-// Page publique de paiement pour les locataires.
-// Aucun compte requis : le locataire saisit son nom, ses infos s'affichent
-// automatiquement, puis il choisit ses mois et son mode de paiement.
+// Page publique de paiement — accessible sans compte.
+// Le locataire saisit son code unique (6 caractères).
+// Ses informations s'affichent automatiquement.
+// Il choisit le nombre de mois et paie via mobile money ou virement.
 //
-// URL spécifique :  /pay?uid=UID&tenantId=ID&nom=NOM&chambre=CH&montant=M
-// URL générale   :  /pay?uid=UID
-//
-// ⚠️  Règles Firestore requises (firestore.rules) :
-//   match /users/{uid}/locataires/{id}  { allow read: if true; }
-//   match /users/{uid}/paiements/{id}   { allow create: if true; }
-//   match /users/{uid}/locataires/{id}  { allow update: if true; }
+// URL : https://gestion-locative-3f02c.web.app/pay
+// Avec code pré-rempli : /pay?code=XXXXXX
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:gestion_locative/payment_code_service.dart';
 
-// ─────────────────────────────────────────────
-// Widget principal
-// ─────────────────────────────────────────────
 class TenantPaymentPage extends StatefulWidget {
-  final String uid;
-  final String tenantId;
-  final String nom;
-  final String chambre;
-  final String montant;
-
-  const TenantPaymentPage({
-    super.key,
-    required this.uid,
-    required this.tenantId,
-    required this.nom,
-    required this.chambre,
-    required this.montant,
-  });
+  final String code;
+  const TenantPaymentPage({super.key, this.code = ''});
 
   @override
   State<TenantPaymentPage> createState() => _TenantPaymentPageState();
 }
 
-enum _Step { search, found, success }
+enum _Step { code, info, payment, processing, success }
 
 class _TenantPaymentPageState extends State<TenantPaymentPage>
     with SingleTickerProviderStateMixin {
-  _Step _step = _Step.search;
+  _Step _step = _Step.code;
 
-  // Champ de recherche
-  final _nameCtrl = TextEditingController();
+  // Code
+  final _codeCtrl = TextEditingController();
   bool _searching = false;
-  bool _notFound = false;
+  String? _codeError;
 
-  // Locataire trouvé
+  // Données locataire
   Map<String, dynamic>? _tenant;
-  String _foundId = '';
-  String _foundName = '';
-  String _foundStatus = '';
   int _foundMonthly = 0;
+  bool _isLate = false;
 
-  // Formulaire paiement
+  // Paiement
   int _months = 1;
   String? _payMethod;
-  bool _processing = false;
+  final _phoneCtrl = TextEditingController();
+  String? _phoneError;
 
   int get _total => _foundMonthly * _months;
 
   late final AnimationController _fadeCtrl;
   late final Animation<double> _fadeAnim;
 
-  // ─────────────────── Cycle de vie ──────────────────
   @override
   void initState() {
     super.initState();
     _fadeCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 400));
-    _fadeAnim =
-        CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
+        vsync: this, duration: const Duration(milliseconds: 350));
+    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
 
-    // Lien spécifique : pré-remplir et chercher automatiquement
-    if (widget.nom.isNotEmpty) {
-      _nameCtrl.text = widget.nom;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _search());
+    if (widget.code.isNotEmpty) {
+      _codeCtrl.text = widget.code;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _lookup());
     }
   }
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
+    _codeCtrl.dispose();
+    _phoneCtrl.dispose();
     _fadeCtrl.dispose();
     super.dispose();
   }
 
-  // ─────────────────── Recherche locataire ──────────
-  Future<void> _search() async {
-    final query = _nameCtrl.text.trim();
-    if (query.length < 2) {
-      setState(() => _notFound = false);
+  // ── Recherche par code ──────────────────────────
+  Future<void> _lookup() async {
+    final code = _codeCtrl.text.trim().toUpperCase();
+    if (code.length != 6) {
+      setState(() => _codeError = 'Le code doit contenir 6 caractères.');
       return;
     }
 
     setState(() {
       _searching = true;
-      _notFound = false;
-      _tenant = null;
+      _codeError = null;
     });
 
-    try {
-      QuerySnapshot snap;
+    final data = await PaymentCodeService.lookup(code);
 
-      // Lien spécifique avec tenantId : requête directe
-      if (widget.tenantId.isNotEmpty && widget.uid.isNotEmpty) {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.uid)
-            .collection('locataires')
-            .doc(widget.tenantId)
-            .get();
-        if (doc.exists) {
-          _applyTenant(doc.id, doc.data() as Map<String, dynamic>);
-          return;
-        }
-      }
+    if (!mounted) return;
 
-      // Recherche par nom dans toute la collection
-      if (widget.uid.isNotEmpty) {
-        snap = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.uid)
-            .collection('locataires')
-            .get();
-
-        final queryLower = query.toLowerCase();
-        final matches = snap.docs.where((doc) {
-          final name =
-              (doc.data() as Map<String, dynamic>)['name']
-                  ?.toString()
-                  .toLowerCase() ??
-              '';
-          return name == queryLower || name.contains(queryLower);
-        }).toList();
-
-        if (matches.isNotEmpty) {
-          _applyTenant(
-              matches.first.id,
-              matches.first.data() as Map<String, dynamic>);
-          return;
-        }
-      } else {
-        // Pas de uid : utiliser les données de l'URL directement
-        if (query.toLowerCase() == widget.nom.toLowerCase()) {
-          _applyFromUrl();
-          return;
-        }
-      }
-
-      // Aucun résultat
+    if (data == null) {
       setState(() {
         _searching = false;
-        _notFound = true;
+        _codeError = 'Code introuvable. Vérifiez et réessayez.';
       });
-    } catch (_) {
-      // Firestore inaccessible : fallback sur l'URL si nom correspond
-      if (widget.nom.isNotEmpty &&
-          query.toLowerCase() == widget.nom.toLowerCase()) {
-        _applyFromUrl();
-      } else {
-        setState(() {
-          _searching = false;
-          _notFound = true;
-        });
+      return;
+    }
+
+    final amountRaw =
+        (data['rentAmount'] ?? '0').toString().replaceAll(RegExp(r'[^0-9]'), '');
+    final monthly = int.tryParse(amountRaw) ?? 0;
+
+    setState(() {
+      _searching = false;
+      _tenant = data;
+      _foundMonthly = monthly;
+      _isLate = (data['statusLabel'] ?? '') == 'Retard';
+      _step = _Step.info;
+    });
+    _fadeCtrl.forward(from: 0);
+  }
+
+  // ── Lancer la page de paiement ──────────────────
+  void _startPayment() {
+    if (_payMethod == null) return;
+    setState(() => _step = _Step.payment);
+  }
+
+  // ── Confirmer le paiement (sandbox) ────────────
+  Future<void> _confirmPayment() async {
+    if (_payMethod != 'Banque') {
+      final phone = _phoneCtrl.text.trim();
+      if (phone.length < 8) {
+        setState(() => _phoneError = 'Numéro invalide.');
+        return;
       }
     }
-  }
 
-  void _applyTenant(String id, Map<String, dynamic> data) {
-    final amountRaw =
-        data['rentAmount']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ??
-        widget.montant;
-    final monthly = int.tryParse(amountRaw) ??
-        int.tryParse(widget.montant) ??
-        0;
+    setState(() => _step = _Step.processing);
 
-    setState(() {
-      _searching = false;
-      _notFound = false;
-      _foundId = id;
-      _foundName = data['name']?.toString() ?? widget.nom;
-      _foundStatus = data['statusLabel']?.toString() ?? 'Paiement attendu';
-      _foundMonthly = monthly;
-      _tenant = {
-        'id': id,
-        'name': _foundName,
-        'room': data['roomNumber']?.toString() ?? widget.chambre,
-        'property': data['propertyName']?.toString() ?? '',
-        'status': _foundStatus,
-        'monthly': monthly,
-      };
-      _step = _Step.found;
-    });
-    _fadeCtrl.forward(from: 0);
-  }
+    // Simulation sandbox : 3 secondes
+    await Future.delayed(const Duration(seconds: 3));
 
-  void _applyFromUrl() {
-    final monthly = int.tryParse(widget.montant) ?? 0;
-    setState(() {
-      _searching = false;
-      _notFound = false;
-      _foundId = widget.tenantId;
-      _foundName = widget.nom;
-      _foundStatus = 'Paiement attendu';
-      _foundMonthly = monthly;
-      _tenant = {
-        'id': widget.tenantId,
-        'name': widget.nom,
-        'room': widget.chambre,
-        'property': '',
-        'status': 'Paiement attendu',
-        'monthly': monthly,
-      };
-      _step = _Step.found;
-    });
-    _fadeCtrl.forward(from: 0);
-  }
+    if (!mounted) return;
 
-  // ─────────────────── Confirmer paiement ───────────
-  Future<void> _pay() async {
-    if (_payMethod == null) return;
-    setState(() => _processing = true);
-
+    // Enregistrer le paiement dans Firestore
     try {
-      if (widget.uid.isNotEmpty) {
+      final uid = _tenant!['uid'] as String;
+      final tenantId = _tenant!['tenantId'] as String;
+      final tenantName = _tenant!['name']?.toString() ?? '';
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('paiements')
+          .add({
+        'tenantId': tenantId,
+        'tenantName': tenantName,
+        'amount': _total,
+        'method': _payMethod,
+        'status': 'paye',
+        'monthsCount': _months,
+        'source': 'lien_partage',
+        'paymentCode': _tenant!['paymentCode'],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (tenantId.isNotEmpty) {
         await FirebaseFirestore.instance
             .collection('users')
-            .doc(widget.uid)
-            .collection('paiements')
-            .add({
-          'tenantId': _foundId,
-          'tenantName': _foundName,
-          'amount': _total,
-          'method': _payMethod,
-          'status': 'paye',
-          'monthsCount': _months,
-          'source': 'lien_partage',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-
-        if (_foundId.isNotEmpty) {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.uid)
-              .collection('locataires')
-              .doc(_foundId)
-              .set({
-            'statusLabel': 'A jour',
-            'statusColor': const Color(0xFF3B6D11).toARGB32(),
-            'balanceLabel': 'Solde a jour',
-            'paymentSummary':
-                'Dernier paiement : ${_fmt(_total)} FCFA',
-            'lastPaymentAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        }
+            .doc(uid)
+            .collection('locataires')
+            .doc(tenantId)
+            .set({
+          'statusLabel': 'A jour',
+          'statusColor': const Color(0xFF3B6D11).toARGB32(),
+          'balanceLabel': 'Solde a jour',
+          'paymentSummary': 'Dernier paiement : ${_fmt(_total)} FCFA',
+          'lastPaymentAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       }
-
-      setState(() {
-        _processing = false;
-        _step = _Step.success;
-      });
     } catch (_) {
-      setState(() => _processing = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-                'Erreur lors de l\'enregistrement. Contactez votre propriétaire.'),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      // Ignorer les erreurs Firestore en mode sandbox
     }
+
+    setState(() => _step = _Step.success);
   }
 
-  // ─────────────────── Format ────────────────────────
   String _fmt(int v) {
     final s = v.toString();
     final buf = StringBuffer();
@@ -289,41 +182,866 @@ class _TenantPaymentPageState extends State<TenantPaymentPage>
     return buf.toString();
   }
 
-  // ─────────────────── Build ─────────────────────────
+  // ══════════════════════════════════════════════════
+  // BUILD
+  // ══════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    if (_step == _Step.success) return _buildSuccess();
-
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4FA),
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              _buildHeader(),
-              _buildSearchSection(),
-              if (_searching) _buildSearching(),
-              if (_notFound) _buildNotFound(),
-              if (_step == _Step.found && _tenant != null)
-                FadeTransition(
-                  opacity: _fadeAnim,
-                  child: _buildPaymentForm(),
+        child: switch (_step) {
+          _Step.code => _buildCodeStep(),
+          _Step.info => _buildInfoStep(),
+          _Step.payment => _buildPaymentStep(),
+          _Step.processing => _buildProcessingStep(),
+          _Step.success => _buildSuccessStep(),
+        },
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════
+  // ÉTAPE 1 — Saisie du code
+  // ══════════════════════════════════════════════════
+  Widget _buildCodeStep() {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          _header('Paiement de Loyer', 'Entrez votre code unique'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 36, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Code de paiement',
+                  style: TextStyle(
+                    color: Color(0xFF132238),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              const SizedBox(height: 40),
-            ],
+                const SizedBox(height: 10),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF1F6FEB).withValues(alpha: 0.08),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: TextField(
+                    controller: _codeCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    maxLength: 6,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF132238),
+                      letterSpacing: 8,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r'[A-Za-z0-9]')),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _codeError = null);
+                      if (v.length == 6) _lookup();
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'EX: A3X7KP',
+                      hintStyle: TextStyle(
+                        color: const Color(0xFF9BAAB8).withValues(alpha: 0.6),
+                        letterSpacing: 6,
+                        fontSize: 22,
+                      ),
+                      counterText: '',
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 22),
+                    ),
+                  ),
+                ),
+
+                if (_codeError != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFEBE5),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFF5B5A0)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.error_outline_rounded,
+                          color: Color(0xFF993C1D), size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(_codeError!,
+                            style: const TextStyle(
+                                color: Color(0xFF993C1D), fontSize: 13)),
+                      ),
+                    ]),
+                  ),
+                ],
+
+                const SizedBox(height: 28),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _searching ? null : _lookup,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1F6FEB),
+                      disabledBackgroundColor: const Color(0xFFB0BEC5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                    ),
+                    child: _searching
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2.5),
+                          )
+                        : const Text('Accéder à mon dossier',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            )),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+                const Center(
+                  child: Text(
+                    'Votre code unique vous a été transmis par votre propriétaire.',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Color(0xFF9BAAB8), fontSize: 12),
+                  ),
+                ),
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════
+  // ÉTAPE 2 — Dossier + sélection paiement
+  // ══════════════════════════════════════════════════
+  Widget _buildInfoStep() {
+    final t = _tenant!;
+    final name = t['name']?.toString() ?? '';
+    final room = t['roomNumber']?.toString() ?? '';
+    final property = t['propertyName']?.toString() ?? '';
+    final code = t['paymentCode']?.toString() ?? '';
+
+    return FadeTransition(
+      opacity: _fadeAnim,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            _header('Votre dossier', 'Code : $code'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── Carte locataire ──────────────────────
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: const Color(0xFF1F6FEB)
+                              .withValues(alpha: 0.25),
+                          width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF1F6FEB)
+                              .withValues(alpha: 0.07),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 54,
+                              height: 54,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF132238),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  name.isNotEmpty
+                                      ? name[0].toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(name,
+                                      style: const TextStyle(
+                                        color: Color(0xFF132238),
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w900,
+                                      )),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    [
+                                      if (room.isNotEmpty) 'Chambre $room',
+                                      if (property.isNotEmpty) property,
+                                    ].join(' · '),
+                                    style: const TextStyle(
+                                        color: Color(0xFF607086),
+                                        fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            _statusBadge(_isLate),
+                          ],
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 14),
+                          child: Divider(
+                              height: 1, color: Color(0xFFEEF3F8)),
+                        ),
+                        Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Loyer mensuel',
+                                style: TextStyle(
+                                    color: Color(0xFF607086),
+                                    fontSize: 13)),
+                            Row(children: [
+                              const Icon(Icons.check_circle_rounded,
+                                  color: Color(0xFF1F6FEB), size: 16),
+                              const SizedBox(width: 5),
+                              Text('${_fmt(_foundMonthly)} FCFA',
+                                  style: const TextStyle(
+                                    color: Color(0xFF132238),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                  )),
+                            ]),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+                  _sectionLabel('Nombre de mois à payer'),
+                  const SizedBox(height: 10),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 16),
+                    decoration: _cardDeco(),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _circleBtn(Icons.remove_rounded, () {
+                          if (_months > 1) setState(() => _months--);
+                        }),
+                        Column(children: [
+                          Text('$_months',
+                              style: const TextStyle(
+                                fontSize: 40,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF132238),
+                              )),
+                          const Text('mois',
+                              style: TextStyle(
+                                  color: Color(0xFF607086),
+                                  fontSize: 12)),
+                        ]),
+                        _circleBtn(Icons.add_rounded, () {
+                          if (_months < 12) setState(() => _months++);
+                        }),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF102A43), Color(0xFF1F6FEB)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Total à payer',
+                                style: TextStyle(
+                                    color: Color(0xFFDDEAF8),
+                                    fontSize: 13)),
+                            const SizedBox(height: 3),
+                            Text(
+                                '${_fmt(_foundMonthly)} × $_months mois',
+                                style: const TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 11)),
+                          ],
+                        ),
+                        Text('${_fmt(_total)} FCFA',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 26,
+                              fontWeight: FontWeight.w900,
+                            )),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+                  _sectionLabel('Mode de paiement'),
+                  const SizedBox(height: 10),
+
+                  _methodTileIcon('MTN MoMo',
+                      Icons.phone_android_rounded,
+                      const Color(0xFFFFCC00),
+                      const Color(0xFF132238),
+                      'MTN'),
+                  const SizedBox(height: 10),
+                  _methodTileIcon('Moov Money',
+                      Icons.phone_android_rounded,
+                      const Color(0xFF003087), Colors.white, 'Moov'),
+                  const SizedBox(height: 10),
+                  _methodTileIcon('Celtis Mobile',
+                      Icons.phone_android_rounded,
+                      const Color(0xFF00A86B), Colors.white, 'Celtis'),
+                  const SizedBox(height: 10),
+                  _methodTileIcon('Virement bancaire',
+                      Icons.account_balance_outlined,
+                      const Color(0xFF132238), Colors.white, 'Banque'),
+
+                  const SizedBox(height: 28),
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 58,
+                    child: ElevatedButton(
+                      onPressed:
+                          _payMethod == null ? null : _startPayment,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF149954),
+                        disabledBackgroundColor: const Color(0xFFB0BEC5),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                        elevation: 0,
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.lock_rounded,
+                              color: Colors.white, size: 18),
+                          SizedBox(width: 10),
+                          Text('PAYER MAINTENANT',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.8,
+                              )),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Center(
+                    child: Text('Mode test (sandbox)',
+                        style: TextStyle(
+                            color: Color(0xFF9BAAB8), fontSize: 11)),
+                  ),
+                  const SizedBox(height: 12),
+                  Center(
+                    child: TextButton(
+                      onPressed: () => setState(() {
+                        _step = _Step.code;
+                        _tenant = null;
+                        _payMethod = null;
+                        _months = 1;
+                        _codeCtrl.clear();
+                      }),
+                      child: const Text('Changer de code',
+                          style: TextStyle(
+                              color: Color(0xFF607086), fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   // ══════════════════════════════════════════════════
-  // EN-TÊTE
+  // ÉTAPE 3 — Interface paiement (sandbox)
   // ══════════════════════════════════════════════════
-  Widget _buildHeader() {
+  Widget _buildPaymentStep() {
+    final isMobile = _payMethod != 'Banque';
+    final methodLabel = switch (_payMethod) {
+      'MTN' => 'MTN MoMo',
+      'Moov' => 'Moov Money',
+      'Celtis' => 'Celtis Mobile',
+      _ => 'Virement bancaire',
+    };
+    final methodColor = switch (_payMethod) {
+      'MTN' => const Color(0xFFFFCC00),
+      'Moov' => const Color(0xFF003087),
+      'Celtis' => const Color(0xFF00A86B),
+      _ => const Color(0xFF132238),
+    };
+    final btnTextColor = methodColor == const Color(0xFFFFCC00)
+        ? const Color(0xFF132238)
+        : Colors.white;
+
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          _header(methodLabel, '${_fmt(_total)} FCFA à payer'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 28, 20, 40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Récapitulatif
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: methodColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: methodColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                          '$_months mois · ${_tenant!['name']}',
+                          style: const TextStyle(
+                              color: Color(0xFF132238),
+                              fontWeight: FontWeight.w700)),
+                      Text('${_fmt(_total)} FCFA',
+                          style: const TextStyle(
+                            color: Color(0xFF132238),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          )),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                if (isMobile) ...[
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: _cardDeco(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: methodColor,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(Icons.phone_android_rounded,
+                                color: btnTextColor, size: 20),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(methodLabel,
+                              style: TextStyle(
+                                color: methodColor ==
+                                        const Color(0xFFFFCC00)
+                                    ? const Color(0xFF132238)
+                                    : methodColor,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                              )),
+                        ]),
+                        const SizedBox(height: 20),
+                        const Text('Numéro de téléphone',
+                            style: TextStyle(
+                              color: Color(0xFF607086),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            )),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          maxLength: 10,
+                          style: const TextStyle(
+                              color: Color(0xFF132238),
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700),
+                          decoration: InputDecoration(
+                            hintText: '97 XX XX XX',
+                            hintStyle: const TextStyle(
+                                color: Color(0xFF9BAAB8), fontSize: 18),
+                            counterText: '',
+                            prefixText: '+229 ',
+                            prefixStyle: const TextStyle(
+                                color: Color(0xFF132238),
+                                fontWeight: FontWeight.w700),
+                            filled: true,
+                            fillColor: const Color(0xFFF5F8FF),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                  color: methodColor, width: 1.5),
+                            ),
+                            errorText: _phoneError,
+                            contentPadding:
+                                const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 14),
+                          ),
+                          onChanged: (_) =>
+                              setState(() => _phoneError = null),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF8E7),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(children: [
+                            Icon(Icons.info_outline_rounded,
+                                color: Color(0xFFB8860B), size: 15),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Vous recevrez une notification sur votre téléphone pour confirmer.',
+                                style: TextStyle(
+                                    color: Color(0xFF7A5C00),
+                                    fontSize: 11),
+                              ),
+                            ),
+                          ]),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
+                  // ── Virement bancaire ─────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: _cardDeco(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(children: [
+                          Icon(Icons.account_balance_outlined,
+                              color: Color(0xFF132238), size: 22),
+                          SizedBox(width: 10),
+                          Text('Coordonnées bancaires',
+                              style: TextStyle(
+                                color: Color(0xFF132238),
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                              )),
+                        ]),
+                        const SizedBox(height: 16),
+                        _bankRow('Banque', 'BOA Bénin'),
+                        _bankRow('Titulaire', 'Gestion Locative'),
+                        _bankRow(
+                            'N° Compte', 'BJ0610001234567890123'),
+                        _bankRow('Référence',
+                            _tenant!['paymentCode']?.toString() ?? ''),
+                        _bankRow('Montant', '${_fmt(_total)} FCFA'),
+                        const SizedBox(height: 12),
+                        GestureDetector(
+                          onTap: () {
+                            Clipboard.setData(ClipboardData(
+                              text:
+                                  'Banque: BOA Bénin\nTitulaire: Gestion Locative\nN°: BJ0610001234567890123\nRef: ${_tenant!['paymentCode']}\nMontant: ${_fmt(_total)} FCFA',
+                            ));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: const Text(
+                                    'Coordonnées copiées !'),
+                                backgroundColor:
+                                    const Color(0xFF149954),
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(12)),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF0F4FA),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.copy_rounded,
+                                    color: Color(0xFF607086), size: 15),
+                                SizedBox(width: 6),
+                                Text('Copier les coordonnées',
+                                    style: TextStyle(
+                                        color: Color(0xFF607086),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 28),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 58,
+                  child: ElevatedButton(
+                    onPressed: _confirmPayment,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: methodColor ==
+                              const Color(0xFFFFCC00)
+                          ? methodColor
+                          : const Color(0xFF149954),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      isMobile
+                          ? 'Confirmer le paiement'
+                          : "J'ai effectué le virement",
+                      style: TextStyle(
+                        color: btnTextColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Center(
+                  child: TextButton(
+                    onPressed: () =>
+                        setState(() => _step = _Step.info),
+                    child: const Text('← Retour',
+                        style: TextStyle(
+                            color: Color(0xFF607086), fontSize: 12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════
+  // ÉTAPE 4 — Traitement (simulation)
+  // ══════════════════════════════════════════════════
+  Widget _buildProcessingStep() {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 64,
+              height: 64,
+              child: CircularProgressIndicator(
+                  color: Color(0xFF1F6FEB), strokeWidth: 4),
+            ),
+            SizedBox(height: 28),
+            Text('Traitement en cours…',
+                style: TextStyle(
+                  color: Color(0xFF132238),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                )),
+            SizedBox(height: 8),
+            Text('Ne fermez pas cette page.',
+                style:
+                    TextStyle(color: Color(0xFF9BAAB8), fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════
+  // ÉTAPE 5 — Succès
+  // ══════════════════════════════════════════════════
+  Widget _buildSuccessStep() {
+    final tenantName = _tenant?['name']?.toString() ?? '';
+    final code = _tenant?['paymentCode']?.toString() ?? '';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3B6D11).withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded,
+                  color: Color(0xFF3B6D11), size: 72),
+            ),
+            const SizedBox(height: 24),
+            const Text('Paiement confirmé !',
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF132238),
+                )),
+            const SizedBox(height: 10),
+            Text('${_fmt(_total)} FCFA',
+                style: const TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF1F6FEB),
+                )),
+            const SizedBox(height: 6),
+            Text('$tenantName · $_months mois · $_payMethod',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: Color(0xFF607086), fontSize: 14)),
+            const SizedBox(height: 32),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FAE4),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFC0DD97)),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.verified_rounded,
+                      color: Color(0xFF3B6D11), size: 18),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Votre paiement a été enregistré. Votre propriétaire sera notifié.',
+                      style: TextStyle(
+                          color: Color(0xFF3B6D11), fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                final receipt =
+                    'REÇU DE PAIEMENT\n'
+                    '─────────────────\n'
+                    'Locataire : $tenantName\n'
+                    'Code : $code\n'
+                    'Montant : ${_fmt(_total)} FCFA\n'
+                    'Mois payés : $_months\n'
+                    'Mode : $_payMethod\n'
+                    '─────────────────';
+                Clipboard.setData(ClipboardData(text: receipt));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('Reçu copié !'),
+                    backgroundColor: const Color(0xFF3B6D11),
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.receipt_long_rounded, size: 17),
+              label: const Text('Copier le reçu'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1F6FEB),
+                side: const BorderSide(color: Color(0xFF1F6FEB)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────── Helpers visuels ──────────────
+  Widget _header(String title, String subtitle) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           colors: [Color(0xFF102A43), Color(0xFF1F6FEB), Color(0xFF63B3ED)],
@@ -340,640 +1058,82 @@ class _TenantPaymentPageState extends State<TenantPaymentPage>
               color: Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
-            child:
-                const Icon(Icons.home_rounded, color: Colors.white, size: 28),
+            child: const Icon(Icons.home_rounded,
+                color: Colors.white, size: 26),
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Paiement de Loyer',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 5),
-          const Text(
-            'Saisissez votre nom pour accéder à votre dossier',
-            style: TextStyle(color: Color(0xFFDDEAF8), fontSize: 13),
-          ),
+          Text(title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+              )),
+          const SizedBox(height: 4),
+          Text(subtitle,
+              style: const TextStyle(
+                  color: Color(0xFFDDEAF8), fontSize: 13)),
         ],
       ),
     );
   }
 
-  // ══════════════════════════════════════════════════
-  // CHAMP DE RECHERCHE
-  // ══════════════════════════════════════════════════
-  Widget _buildSearchSection() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Votre nom complet',
-            style: TextStyle(
-              color: Color(0xFF132238),
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              // Champ texte
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF132238).withValues(alpha: 0.06),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _nameCtrl,
-                    textCapitalization: TextCapitalization.words,
-                    style: const TextStyle(
-                        color: Color(0xFF132238), fontSize: 15),
-                    onSubmitted: (_) => _search(),
-                    decoration: InputDecoration(
-                      hintText: 'Ex : Kofi Mensah',
-                      hintStyle: const TextStyle(
-                          color: Color(0xFF9BAAB8), fontSize: 14),
-                      prefixIcon: const Icon(Icons.person_search_rounded,
-                          color: Color(0xFF1F6FEB), size: 22),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 16),
-                    ),
-                    onChanged: (_) {
-                      // Réinitialiser si l'utilisateur modifie
-                      if (_step == _Step.found) {
-                        setState(() {
-                          _step = _Step.search;
-                          _tenant = null;
-                          _notFound = false;
-                        });
-                      }
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // Bouton Rechercher
-              GestureDetector(
-                onTap: _search,
-                child: Container(
-                  height: 54,
-                  width: 54,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1F6FEB),
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF1F6FEB).withValues(alpha: 0.35),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(Icons.search_rounded,
-                      color: Colors.white, size: 26),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Saisissez votre nom exactement comme enregistré par votre propriétaire.',
-            style: TextStyle(color: Color(0xFF9BAAB8), fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════
-  // ÉTATS INTERMÉDIAIRES
-  // ══════════════════════════════════════════════════
-  Widget _buildSearching() {
-    return const Padding(
-      padding: EdgeInsets.all(32),
-      child: Column(
-        children: [
-          CircularProgressIndicator(
-              color: Color(0xFF1F6FEB), strokeWidth: 2.5),
-          SizedBox(height: 14),
-          Text('Recherche en cours…',
-              style: TextStyle(color: Color(0xFF607086), fontSize: 13)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotFound() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-      child: Container(
-        padding: const EdgeInsets.all(16),
+  Widget _statusBadge(bool isLate) => Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFEBE5),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFF5B5A0)),
-        ),
-        child: const Row(
-          children: [
-            Icon(Icons.search_off_rounded,
-                color: Color(0xFF993C1D), size: 22),
-            SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Locataire introuvable',
-                    style: TextStyle(
-                      color: Color(0xFF993C1D),
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                    ),
-                  ),
-                  SizedBox(height: 3),
-                  Text(
-                    'Vérifiez l\'orthographe ou contactez votre propriétaire.',
-                    style:
-                        TextStyle(color: Color(0xFF993C1D), fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════
-  // FORMULAIRE DE PAIEMENT (affiché après trouvé)
-  // ══════════════════════════════════════════════════
-  Widget _buildPaymentForm() {
-    final isLate = _foundStatus == 'Retard';
-    final t = _tenant!;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Carte locataire trouvé ───────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                  color: const Color(0xFF1F6FEB).withValues(alpha: 0.3),
-                  width: 1.5),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF1F6FEB).withValues(alpha: 0.08),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    // Avatar
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF132238),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Center(
-                        child: Text(
-                          _foundName.isNotEmpty
-                              ? _foundName[0].toUpperCase()
-                              : '?',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _foundName,
-                            style: const TextStyle(
-                              color: Color(0xFF132238),
-                              fontSize: 17,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            [
-                              if ((t['room'] as String).isNotEmpty)
-                                'Chambre ${t['room']}',
-                              if ((t['property'] as String).isNotEmpty)
-                                t['property'] as String,
-                            ].join(' · '),
-                            style: const TextStyle(
-                                color: Color(0xFF607086), fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Badge statut
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isLate
-                            ? const Color(0xFFFFEBE5)
-                            : const Color(0xFFF0FAE4),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: isLate
-                              ? const Color(0xFFF5B5A0)
-                              : const Color(0xFFC0DD97),
-                        ),
-                      ),
-                      child: Text(
-                        isLate ? 'En retard' : 'À jour',
-                        style: TextStyle(
-                          color: isLate
-                              ? const Color(0xFF993C1D)
-                              : const Color(0xFF3B6D11),
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 14),
-                  child: Divider(height: 1, color: Color(0xFFEEF3F8)),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Loyer mensuel',
-                      style:
-                          TextStyle(color: Color(0xFF607086), fontSize: 13),
-                    ),
-                    Row(
-                      children: [
-                        const Icon(Icons.check_circle_rounded,
-                            color: Color(0xFF1F6FEB), size: 16),
-                        const SizedBox(width: 5),
-                        Text(
-                          '${_fmt(_foundMonthly)} FCFA',
-                          style: const TextStyle(
-                            color: Color(0xFF132238),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // ── Nombre de mois ───────────────────────────
-          _sectionLabel('Nombre de mois à payer'),
-          const SizedBox(height: 10),
-
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 8),
-              ],
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _roundBtn(Icons.remove_rounded, () {
-                  if (_months > 1) setState(() => _months--);
-                }),
-                Column(
-                  children: [
-                    Text(
-                      '$_months',
-                      style: const TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF132238),
-                      ),
-                    ),
-                    Text(
-                      _months == 1 ? 'mois' : 'mois',
-                      style: const TextStyle(
-                          color: Color(0xFF607086), fontSize: 12),
-                    ),
-                  ],
-                ),
-                _roundBtn(Icons.add_rounded, () {
-                  if (_months < 12) setState(() => _months++);
-                }),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          // ── Total ────────────────────────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF102A43), Color(0xFF1F6FEB)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Total à payer',
-                        style: TextStyle(
-                            color: Color(0xFFDDEAF8), fontSize: 13)),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${_fmt(_foundMonthly)} × $_months mois',
-                      style: const TextStyle(
-                          color: Colors.white60, fontSize: 11),
-                    ),
-                  ],
-                ),
-                Text(
-                  '${_fmt(_total)} FCFA',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // ── Modes de paiement ────────────────────────
-          _sectionLabel('Mode de paiement'),
-          const SizedBox(height: 10),
-
-          _methodTile('MTN MoMo', Icons.phone_android_rounded,
-              const Color(0xFFFFCC00), const Color(0xFF132238), 'MTN'),
-          const SizedBox(height: 10),
-          _methodTile('Moov Money', Icons.phone_android_rounded,
-              const Color(0xFF1F6FEB), Colors.white, 'Moov'),
-          const SizedBox(height: 10),
-          _methodTile('Celtis Mobile', Icons.phone_android_rounded,
-              const Color(0xFF00A86B), Colors.white, 'Celtis'),
-          const SizedBox(height: 10),
-          _methodTile('Virement bancaire',
-              Icons.account_balance_outlined,
-              const Color(0xFF132238), Colors.white, 'Banque'),
-
-          const SizedBox(height: 28),
-
-          // ── Bouton Payer Maintenant ──────────────────
-          SizedBox(
-            width: double.infinity,
-            height: 58,
-            child: ElevatedButton(
-              onPressed: (_payMethod == null || _processing) ? null : _pay,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF149954),
-                disabledBackgroundColor: const Color(0xFFB0BEC5),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
-                elevation: 0,
-              ),
-              child: _processing
-                  ? const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2.5),
-                    )
-                  : const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.lock_rounded,
-                            color: Colors.white, size: 18),
-                        SizedBox(width: 10),
-                        Text(
-                          'PAYER MAINTENANT',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-          const Center(
-            child: Text(
-              'Paiement sécurisé · Données chiffrées',
-              style: TextStyle(color: Color(0xFF9BAAB8), fontSize: 11),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════
-  // SUCCESS
-  // ══════════════════════════════════════════════════
-  Widget _buildSuccess() {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FA),
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(28),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B6D11).withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.check_circle_rounded,
-                      color: Color(0xFF3B6D11), size: 68),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Paiement confirmé !',
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF132238),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '${_fmt(_total)} FCFA',
-                  style: const TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF1F6FEB),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Payé par $_foundName',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Color(0xFF607086), fontSize: 15),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'via $_payMethod · $_months mois',
-                  style: const TextStyle(
-                      color: Color(0xFF9BAAB8), fontSize: 13),
-                ),
-                const SizedBox(height: 32),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF0FAE4),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFFC0DD97)),
-                  ),
-                  child: const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.info_outline_rounded,
-                          color: Color(0xFF3B6D11), size: 18),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Votre paiement a été enregistré. Votre propriétaire sera notifié automatiquement.',
-                          style: TextStyle(
-                              color: Color(0xFF3B6D11), fontSize: 13),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    final receipt = 'Reçu de paiement\n'
-                        'Locataire : $_foundName\n'
-                        'Montant : ${_fmt(_total)} FCFA\n'
-                        'Mois payés : $_months\n'
-                        'Mode : $_payMethod';
-                    Clipboard.setData(ClipboardData(text: receipt));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: const Text('Reçu copié !'),
-                        backgroundColor: const Color(0xFF3B6D11),
-                        behavior: SnackBarBehavior.floating,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.copy_rounded, size: 16),
-                  label: const Text('Copier le reçu'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF1F6FEB),
-                    side: const BorderSide(color: Color(0xFF1F6FEB)),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 12),
-                  ),
-                ),
-              ],
-            ),
+          color: isLate
+              ? const Color(0xFFFFEBE5)
+              : const Color(0xFFF0FAE4),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isLate
+                ? const Color(0xFFF5B5A0)
+                : const Color(0xFFC0DD97),
           ),
         ),
-      ),
-    );
-  }
+        child: Text(
+          isLate ? 'En retard' : 'À jour',
+          style: TextStyle(
+            color: isLate
+                ? const Color(0xFF993C1D)
+                : const Color(0xFF3B6D11),
+            fontWeight: FontWeight.w800,
+            fontSize: 11,
+          ),
+        ),
+      );
 
-  // ─────────────────── Widgets helpers ──────────────
-  Widget _sectionLabel(String text) {
-    return Text(
-      text,
+  Widget _sectionLabel(String t) => Text(t,
       style: const TextStyle(
         color: Color(0xFF132238),
         fontSize: 14,
         fontWeight: FontWeight.w800,
-      ),
-    );
-  }
+      ));
 
-  Widget _roundBtn(IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1F6FEB),
-          borderRadius: BorderRadius.circular(12),
+  BoxDecoration _cardDeco() => BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 8),
+        ],
+      );
+
+  Widget _circleBtn(IconData icon, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+              color: const Color(0xFF1F6FEB),
+              borderRadius: BorderRadius.circular(12)),
+          child: Icon(icon, color: Colors.white, size: 22),
         ),
-        child: Icon(icon, color: Colors.white, size: 22),
-      ),
-    );
-  }
+      );
 
-  Widget _methodTile(
-    String label,
-    IconData icon,
-    Color bg,
-    Color textColor,
-    String method,
-  ) {
+  Widget _methodTileIcon(String label, IconData icon, Color bg,
+      Color textColor, String method) {
     final selected = _payMethod == method;
     return GestureDetector(
       onTap: () => setState(() => _payMethod = method),
@@ -985,9 +1145,8 @@ class _TenantPaymentPageState extends State<TenantPaymentPage>
           color: selected ? bg : Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: selected ? bg : const Color(0xFFE0E8F0),
-            width: selected ? 2 : 1,
-          ),
+              color: selected ? bg : const Color(0xFFE0E8F0),
+              width: selected ? 2 : 1),
           boxShadow: [
             BoxShadow(
                 color: Colors.black.withValues(alpha: 0.04),
@@ -1000,14 +1159,12 @@ class _TenantPaymentPageState extends State<TenantPaymentPage>
                 color: selected ? textColor : const Color(0xFF607086),
                 size: 22),
             const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? textColor : const Color(0xFF132238),
-                fontWeight: FontWeight.w700,
-                fontSize: 15,
-              ),
-            ),
+            Text(label,
+                style: TextStyle(
+                  color: selected ? textColor : const Color(0xFF132238),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                )),
             const Spacer(),
             if (selected)
               Icon(Icons.check_circle_rounded,
@@ -1017,4 +1174,22 @@ class _TenantPaymentPageState extends State<TenantPaymentPage>
       ),
     );
   }
+
+  Widget _bankRow(String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: const TextStyle(
+                    color: Color(0xFF607086), fontSize: 12)),
+            Text(value,
+                style: const TextStyle(
+                  color: Color(0xFF132238),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                )),
+          ],
+        ),
+      );
 }

@@ -16,6 +16,10 @@
     ],
     "rewrites": [
       {
+        "source": "/payer",
+        "destination": "/payer.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

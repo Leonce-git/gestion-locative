@@ -21,8 +21,33 @@ import 'package:gestion_locative/editMaison.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (kIsWeb) usePathUrlStrategy();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // ── Intercepter /pay AVANT le flux d'authentification ──
+  // Sans ça, Flutter redirige vers #/connect et bloque le locataire.
+  if (kIsWeb) {
+    usePathUrlStrategy();
+    final uri = Uri.base;
+    if (uri.path == '/pay') {
+      await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform);
+      runApp(MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Paiement Loyer',
+        theme: ThemeData(
+          colorScheme:
+              ColorScheme.fromSeed(seedColor: const Color(0xFF1F6FEB)),
+          useMaterial3: true,
+        ),
+        home: TenantPaymentPage(
+          code: uri.queryParameters['code'] ?? '',
+        ),
+      ));
+      return;
+    }
+  }
+
+  await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
@@ -35,29 +60,11 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Gestion locative',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F6FEB)),
+        colorScheme:
+            ColorScheme.fromSeed(seedColor: const Color(0xFF1F6FEB)),
         useMaterial3: true,
       ),
       home: const Home(),
-      // Gestion des routes dynamiques (ex: /pay?uid=...&nom=...)
-      onGenerateRoute: (settings) {
-        final name = settings.name ?? '';
-        final uri = Uri.tryParse(name);
-        if (uri != null && uri.path == '/pay') {
-          final p = uri.queryParameters;
-          return MaterialPageRoute(
-            builder: (_) => TenantPaymentPage(
-              uid: p['uid'] ?? '',
-              tenantId: p['tenantId'] ?? '',
-              nom: p['nom'] ?? '',
-              chambre: p['chambre'] ?? '',
-              montant: p['montant'] ?? '0',
-            ),
-            settings: settings,
-          );
-        }
-        return null;
-      },
       routes: {
         '/connect':      (context) => const Connect(),
         '/accueil':      (context) => Accueil(userName: "Utilisateur"),
