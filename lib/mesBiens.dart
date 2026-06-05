@@ -18,6 +18,7 @@ class _C {
 enum _PropertyFilter { all, rented, free }
 
 class _Property {
+  final String? id;
   final String title;
   final String location;
   final String type;
@@ -28,6 +29,7 @@ class _Property {
   final String? tenantName;
 
   const _Property({
+    this.id,
     required this.title,
     required this.location,
     required this.type,
@@ -44,6 +46,7 @@ class _Property {
         ? (map['priceNumber'] as num).toInt()
         : _parseAmount(map['price']?.toString() ?? '');
     return _Property(
+      id: map['id']?.toString(),
       title: map['title']?.toString() ?? 'Bien sans nom',
       location: map['location']?.toString() ?? '',
       type: map['type']?.toString() ?? '',
@@ -184,9 +187,10 @@ class _MesBiensState extends State<MesBiens> {
             final properties = snapshot.hasData
                 ? snapshot.data!.docs
                       .map(
-                        (doc) => _Property.fromMap(
-                          doc.data() as Map<String, dynamic>,
-                        ),
+                        (doc) => _Property.fromMap({
+                          ...(doc.data() as Map<String, dynamic>),
+                          'id': doc.id,
+                        }),
                       )
                       .toList()
                 : <_Property>[];
@@ -210,15 +214,12 @@ class _MesBiensState extends State<MesBiens> {
     );
   }
 
-  Future<void> _addProperty() async {
-    final result = await Navigator.pushNamed(context, '/ajout');
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null || result is! Map<String, dynamic>) return;
-
-    setState(() {
-      _localProperties.insert(0, _Property.fromMap(result));
-    });
-  }
+ // ✅ CORRIGÉ
+Future<void> _addProperty() async {
+  await Navigator.pushNamed(context, '/ajout');
+  // Rien à faire : le StreamBuilder se met à jour automatiquement
+  // grâce à Firestore en temps réel
+}
 
   Widget _propertiesContent(
     List<_Property> properties,
@@ -445,10 +446,11 @@ class _FilterButton extends StatelessWidget {
   }
 }
 
-class _PropertyCard extends StatelessWidget {
+class PropertyCard extends StatelessWidget {
   final _Property property;
+  final VoidCallback? onDelete;
 
-  const _PropertyCard({required this.property});
+  const PropertyCard({required this.property, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -508,7 +510,7 @@ class _PropertyCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          property.isRented ? 'Loue' : 'Libre',
+                          property.isRented ? 'Loué' : 'Libre',
                           style: TextStyle(
                             color: statusColor,
                             fontSize: 11,
@@ -537,12 +539,59 @@ class _PropertyCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     property.isRented
-                        ? 'Locataire : ${property.tenantName ?? 'Non renseigne'}'
+                        ? 'Locataire : ${property.tenantName ?? 'Non renseigné'}'
                         : 'Disponible maintenant',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: _C.textMuted, fontSize: 12),
                   ),
+Row(
+  mainAxisAlignment: MainAxisAlignment.end,
+  children: [
+    // Bouton Modifier
+    IconButton(
+  tooltip: 'Modifier',
+  icon: const Icon(Icons.edit, color: Colors.blue),
+  onPressed: () {
+    Navigator.pushNamed(
+      context,
+      '/editMaison',
+      arguments: {
+        'id': property.id,
+        'title': property.title,
+        'priceNumber': property.priceNumber,
+        'location': property.location,
+        'description': '', // ajoute si tu stockes une description
+      },
+    );
+  },
+),
+
+    // Bouton Supprimer
+    IconButton(
+      tooltip: 'Supprimer',
+      icon: const Icon(Icons.delete, color: Colors.red),
+      onPressed: () async {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null && property.id != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('biens')
+              .doc(property.id)
+              .delete();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Bien supprimé avec succès')),
+          );
+        }
+      },
+    ),
+  ],
+),
+                    
+                      
+                    
                 ],
               ),
             ),
@@ -550,6 +599,18 @@ class _PropertyCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _PropertyCard extends StatelessWidget {
+  final _Property property;
+  final VoidCallback? onDelete;
+
+  const _PropertyCard({required this.property, this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    return PropertyCard(property: property, onDelete: onDelete);
   }
 }
 

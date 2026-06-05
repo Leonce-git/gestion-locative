@@ -17,6 +17,7 @@ import 'package:gestion_locative/ajoutMaison.dart';
 import 'package:gestion_locative/ajout.dart';
 import 'package:gestion_locative/Accueil.dart';
 import 'package:gestion_locative/tenant_payment_page.dart';
+import 'package:gestion_locative/editMaison.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,18 +59,30 @@ class MyApp extends StatelessWidget {
         return null;
       },
       routes: {
-        '/connect': (context) => const Connect(),
-        '/accueil': (context) => Accueil(userName: "Utilisateur"),
-        '/mesBiens': (context) => const MesBiens(),
-        '/paiement': (context) => const Paiement(),
-        '/document': (context) => const Document(),
-        '/profil': (context) => const Profil(),
-        '/scan': (context) => const Scan(),
+        '/connect':      (context) => const Connect(),
+        '/accueil':      (context) => Accueil(userName: "Utilisateur"),
+        '/mesBiens':     (context) => const MesBiens(),
+        '/paiement':     (context) => const Paiement(),
+        '/document':     (context) => const Document(),
+        '/profil':       (context) => const Profil(),
+        '/scan':         (context) => const Scan(),
         '/proprietaire': (context) => const Propretaire(),
-        '/locataire': (context) => const LocatairesScreen(),
-        '/ajout': (context) => const AjoutMaison(),
+        '/locataire':    (context) => const LocatairesScreen(),
+        '/ajout':        (context) => const AjoutMaison(),
         '/ajoutLocataire': (context) => const Ajout(),
-        '/payeCash': (context) => const PayeCash(),
+        '/payeCash':     (context) => const PayeCash(),
+        '/editMaison': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
+          return EditMaison(
+            propertyData: {
+              'title': args['title'],
+              'priceNumber': args['priceNumber'],
+              'location': args['location'],
+              'description': '', 
+            },
+            propertyId: args['id']!,
+          );
+        },
       },
     );
   }
