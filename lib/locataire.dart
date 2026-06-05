@@ -369,40 +369,14 @@ class _LocatairesScreenState extends State<LocatairesScreen> {
 
   Future<void> _addTenant(BuildContext context) async {
     final result = await Navigator.pushNamed(context, '/ajoutLocataire');
-    final user = FirebaseAuth.instance.currentUser;
-    if (result is TenantRecord && user != null) {
-      try {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .collection('locataires')
-            .add({...result.toMap(), 'createdAt': FieldValue.serverTimestamp()});
-      } on FirebaseException catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message ?? 'Enregistrement impossible.'),
-            backgroundColor: const Color(0xFF993C1D),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } catch (_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Enregistrement impossible pour le moment.'),
-            backgroundColor: Color(0xFF993C1D),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+    if (result is TenantRecord) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        // Not authenticated — keep a local preview copy so the UI updates.
+        setState(() => _tenants.insert(0, result));
       }
-    } else if (result is TenantRecord) {
-      setState(() {
-        _tenants.insert(
-          0,
-          result.copyWith(id: DateTime.now().microsecondsSinceEpoch.toString()),
-        );
-      });
+      // If authenticated, the Ajout screen already persisted the tenant to Firestore.
+      // The StreamBuilder in this screen will pick up the new document; avoid duplicate writes.
     }
   }
 
@@ -427,10 +401,19 @@ class _LocatairesScreenState extends State<LocatairesScreen> {
                   )
                   .toList()
             : <TenantRecord>[];
+        // Deduplicate tenants by (name, roomNumber, propertyName) to avoid duplicate
+        // documents showing twice. Keep the first occurrence (stream is ordered by
+        // createdAt descending, so first is most recent).
+        final uniqueMap = <String, TenantRecord>{};
+        for (final t in tenants) {
+          final key = '${t.name.toLowerCase()}|${t.roomNumber.toLowerCase()}|${t.propertyName.toLowerCase()}';
+          if (!uniqueMap.containsKey(key)) uniqueMap[key] = t;
+        }
+        final uniqueTenants = uniqueMap.values.toList();
         final q = _query.toLowerCase();
         final filtered = q.isEmpty
-            ? tenants
-            : tenants
+            ? uniqueTenants
+            : uniqueTenants
                   .where(
                     (t) =>
                         t.name.toLowerCase().contains(q) ||

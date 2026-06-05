@@ -14,7 +14,7 @@ import 'package:gestion_locative/home.dart';
 import 'package:gestion_locative/ajoutMaison.dart';
 import 'package:gestion_locative/ajout.dart';
 import 'package:gestion_locative/Accueil.dart';
-
+import 'package:gestion_locative/editMaison.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -33,21 +33,33 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F6FEB)),
         useMaterial3: true,
       ),
-      home: const Home(),
+      home:  const Home(),
       routes: {
-        '/connect': (context) => const Connect(),
+        '/connect':      (context) => const Connect(),
         '/accueil': (context) => Accueil(userName: "Utilisateur"),
 
-        '/mesBiens': (context) => const MesBiens(),
-        '/paiement': (context) => const Paiement(),
-        '/document': (context) => const Document(),
-        '/profil': (context) => const Profil(),
-        '/scan': (context) => const Scan(),
+        '/mesBiens':    (context) => const MesBiens(),
+        '/paiement':     (context) => const Paiement(),
+        '/document':     (context) => const Document(),
+        '/profil':       (context) => const Profil(),
+        '/scan':         (context) => const Scan(),
         '/proprietaire': (context) => const Propretaire(),
-        '/locataire': (context) => const LocatairesScreen(),
-        '/ajout': (context) => const AjoutMaison(),
+        '/locataire':    (context) => const LocatairesScreen(),
+        '/ajout':        (context) => const AjoutMaison(),
         '/ajoutLocataire': (context) => const Ajout(),
-        '/payeCash': (context) => const PayeCash(),
+        '/payeCash':     (context) => const PayeCash(),
+         '/editMaison': (context) {
+    final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
+    return EditMaison(
+      propertyData: {
+        'title': args['title'],
+        'priceNumber': args['priceNumber'],
+        'location': args['location'],
+        'description': '', 
+      },
+      propertyId: args['id']!,
+    );
+  },
       },
     );
   }

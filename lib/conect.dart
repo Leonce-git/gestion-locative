@@ -248,13 +248,13 @@ class _ConnectState extends State<Connect> with SingleTickerProviderStateMixin {
   Widget _buildHero() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
+      padding: const EdgeInsets.fromLTRB(30, 48, 24, 32),
       child: Column(
         children: [
           // Cercle jaune avec logo
           Container(
-            width: 90,
-            height: 90,
+            width: 50,
+            height: 50,
             decoration: const BoxDecoration(
               color: AppColors.cream,
               shape: BoxShape.circle,

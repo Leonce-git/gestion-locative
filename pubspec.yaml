@@ -39,14 +39,16 @@ dependencies:
   fl_chart: ^0.69.0
   http: ^1.6.0
   shared_preferences: ^2.5.3
-  document_scanner_flutter:
-    path: third_party/document_scanner_flutter
   image_picker: ^1.1.2
    # 🔥 Firebase
   # 🔥 Firebase (versions compatibles)
   firebase_core: ^3.12.1
   cloud_firestore: ^5.0.1
   firebase_auth: ^5.5.2
+  file_picker: ^8.0.0
+  firebase_storage: ^12.3.4
+  
+
   
 
   

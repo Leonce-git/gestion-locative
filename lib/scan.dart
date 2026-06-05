@@ -1,7 +1,8 @@
 import 'dart:io';
-
-import 'package:document_scanner_flutter/configs/configs.dart';
-import 'package:document_scanner_flutter/document_scanner_flutter.dart';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:gestion_locative/app_background.dart';
 
@@ -14,8 +15,12 @@ class Scan extends StatefulWidget {
 
 class _ScanState extends State<Scan> with SingleTickerProviderStateMixin {
   late final AnimationController _scanController;
-  File? _scannedImage;
+
+  File? _scannedImage;           // mobile
+  Uint8List? _scannedImageBytes; // web
+
   bool _isScanning = false;
+  bool _scanFailed = false;
   String? _scanError;
 
   @override
@@ -33,75 +38,101 @@ class _ScanState extends State<Scan> with SingleTickerProviderStateMixin {
     super.dispose();
   }
 
+  bool get _hasScan =>
+      kIsWeb ? _scannedImageBytes != null : _scannedImage != null;
+
+  // Remplace DocumentScannerFlutter par image_picker (caméra)
   Future<void> _scanDocument() async {
     setState(() {
       _isScanning = true;
       _scanError = null;
+      _scanFailed = false;
     });
 
     try {
-      final file = await DocumentScannerFlutter.launch(
-        context,
-        source: ScannerFileSource.CAMERA,
-        labelsConfig: {
-          ScannerLabelsConfig.ANDROID_NEXT_BUTTON_LABEL: 'Suivant',
-          ScannerLabelsConfig.ANDROID_SAVE_BUTTON_LABEL: 'Enregistrer',
-          ScannerLabelsConfig.ANDROID_ROTATE_LEFT_LABEL: 'Tourner a gauche',
-          ScannerLabelsConfig.ANDROID_ROTATE_RIGHT_LABEL: 'Tourner a droite',
-          ScannerLabelsConfig.ANDROID_ORIGINAL_LABEL: 'Original',
-          ScannerLabelsConfig.ANDROID_BMW_LABEL: 'Noir et blanc',
-          ScannerLabelsConfig.ANDROID_SCANNING_MESSAGE: 'Scan en cours...',
-          ScannerLabelsConfig.ANDROID_LOADING_MESSAGE: 'Chargement...',
-          ScannerLabelsConfig.ANDROID_APPLYING_FILTER_MESSAGE:
-              'Application du filtre...',
-          ScannerLabelsConfig.ANDROID_OK_LABEL: 'OK',
-        },
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
       );
 
-      if (file == null || !mounted) {
-        return;
-      }
+      if (pickedFile == null || !mounted) return;
 
-      setState(() {
-        _scannedImage = file;
-      });
+      if (kIsWeb) {
+        final bytes = await pickedFile.readAsBytes();
+        setState(() => _scannedImageBytes = bytes);
+      } else {
+        setState(() => _scannedImage = File(pickedFile.path));
+      }
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       setState(() {
-        _scanError = 'Impossible de lancer le scanner: $error';
+        _scanError = 'Caméra indisponible. Vous pouvez importer un fichier.';
+        _scanFailed = true;
       });
     } finally {
-      if (mounted) {
+      if (mounted) setState(() => _isScanning = false);
+    }
+  }
+
+  Future<void> _pickFile() async {
+    setState(() => _scanError = null);
+
+    try {
+      if (kIsWeb) {
+        // Sur web : utiliser image_picker galerie
+        final picker = ImagePicker();
+        final pickedFile = await picker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 85,
+        );
+        if (pickedFile == null || !mounted) return;
+        final bytes = await pickedFile.readAsBytes();
         setState(() {
-          _isScanning = false;
+          _scannedImageBytes = bytes;
+          _scanFailed = false;
+          _scanError = null;
+        });
+      } else {
+        // Sur mobile : file_picker pour images et PDF
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+        );
+        if (result == null || result.files.single.path == null || !mounted) {
+          return;
+        }
+        setState(() {
+          _scannedImage = File(result.files.single.path!);
+          _scanFailed = false;
+          _scanError = null;
         });
       }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _scanError = 'Impossible d\'ouvrir le fichier: $e');
     }
   }
 
   void _validateScan() {
-    final file = _scannedImage;
-    if (file == null) {
-      return;
-    }
-
-    Navigator.pop(context, 'Document scanne: ${file.path}');
+    if (!_hasScan) return;
+    final label = kIsWeb
+        ? 'Document scanné (web)'
+        : 'Document scanné: ${_scannedImage!.path}';
+    Navigator.pop(context, label);
   }
 
   void _resetScan() {
     setState(() {
       _scannedImage = null;
+      _scannedImageBytes = null;
       _scanError = null;
+      _scanFailed = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasScan = _scannedImage != null;
-
     return Scaffold(
       backgroundColor: const Color(0xFFFFF3E0),
       appBar: AppBar(
@@ -130,16 +161,19 @@ class _ScanState extends State<Scan> with SingleTickerProviderStateMixin {
                       child: _ScanFrame(
                         animation: _scanController,
                         image: _scannedImage,
+                        imageBytes: _scannedImageBytes,
                         isScanning: _isScanning,
                       ),
                     ),
                     const SizedBox(height: 16),
                     _ScanActionPanel(
-                      hasScan: hasScan,
+                      hasScan: _hasScan,
                       isScanning: _isScanning,
+                      scanFailed: _scanFailed,
                       onScan: _scanDocument,
                       onValidate: _validateScan,
                       onReset: _resetScan,
+                      onPickFile: _pickFile,
                     ),
                     const SizedBox(height: 16),
                     if (_scanError != null)
@@ -149,18 +183,18 @@ class _ScanState extends State<Scan> with SingleTickerProviderStateMixin {
                         message: _scanError!,
                         color: const Color(0xFFD64545),
                       )
-                    else if (hasScan)
+                    else if (_hasScan)
                       _ScanStatusCard(
                         icon: Icons.check_circle_outline,
-                        title: 'Document capture',
+                        title: 'Document capturé',
                         message:
-                            'Verifiez l\'apercu, puis validez pour l\'ajouter au dossier.',
+                            'Vérifiez l\'aperçu, puis validez pour l\'ajouter au dossier.',
                         color: const Color(0xFF149954),
                       )
                     else
                       const _ScanHelpBubble(),
                     const SizedBox(height: 16),
-                    _ScanTips(hasScan: hasScan),
+                    _ScanTips(hasScan: _hasScan),
                   ],
                 ),
               ),
@@ -197,7 +231,7 @@ class _ScanHero extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Numeriser un document',
+                  'Numériser un document',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 22,
@@ -206,7 +240,7 @@ class _ScanHero extends StatelessWidget {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'Cadrez le contrat, l\'etat des lieux ou une piece du dossier locataire.',
+                  'Cadrez le contrat, l\'état des lieux ou une pièce du dossier locataire.',
                   style: TextStyle(color: Color(0xFFDDEAF8), height: 1.4),
                 ),
               ],
@@ -242,16 +276,20 @@ class _HeroIcon extends StatelessWidget {
 class _ScanFrame extends StatelessWidget {
   final Animation<double> animation;
   final File? image;
+  final Uint8List? imageBytes;
   final bool isScanning;
 
   const _ScanFrame({
     required this.animation,
     required this.image,
+    required this.imageBytes,
     required this.isScanning,
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasImage = kIsWeb ? imageBytes != null : image != null;
+
     return AspectRatio(
       aspectRatio: 1,
       child: ConstrainedBox(
@@ -272,15 +310,17 @@ class _ScanFrame extends StatelessWidget {
           child: Stack(
             children: [
               Positioned.fill(
-                child: image == null
+                child: !hasImage
                     ? const _EmptyScanSurface()
-                    : Image.file(image!, fit: BoxFit.cover),
+                    : kIsWeb
+                        ? Image.memory(imageBytes!, fit: BoxFit.cover)
+                        : Image.file(image!, fit: BoxFit.cover),
               ),
               Positioned.fill(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(
-                      alpha: image == null ? 0 : 0.08,
+                      alpha: hasImage ? 0.08 : 0,
                     ),
                   ),
                 ),
@@ -288,13 +328,13 @@ class _ScanFrame extends StatelessWidget {
               Positioned.fill(
                 child: CustomPaint(
                   painter: _ScannerCornerPainter(
-                    color: image == null
-                        ? const Color(0xFF63B3ED)
-                        : const Color(0xFF149954),
+                    color: hasImage
+                        ? const Color(0xFF149954)
+                        : const Color(0xFF63B3ED),
                   ),
                 ),
               ),
-              if (image == null)
+              if (!hasImage)
                 AnimatedBuilder(
                   animation: animation,
                   builder: (context, child) {
@@ -314,9 +354,7 @@ class _ScanFrame extends StatelessWidget {
                       borderRadius: BorderRadius.circular(99),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(
-                            0xFF63B3ED,
-                          ).withValues(alpha: 0.55),
+                          color: const Color(0xFF63B3ED).withValues(alpha: 0.55),
                           blurRadius: 16,
                           spreadRadius: 1,
                         ),
@@ -358,11 +396,7 @@ class _EmptyScanSurface extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.description_outlined,
-              color: Color(0xFFDDEAF8),
-              size: 52,
-            ),
+            Icon(Icons.description_outlined, color: Color(0xFFDDEAF8), size: 52),
             SizedBox(height: 10),
             Text(
               'Placez le document dans le cadre',
@@ -394,67 +428,38 @@ class _ScannerCornerPainter extends CustomPainter {
     const cornerLength = 58.0;
     const inset = 16.0;
 
-    canvas.drawLine(
-      const Offset(inset, inset),
-      const Offset(inset + cornerLength, inset),
-      paint,
-    );
-    canvas.drawLine(
-      const Offset(inset, inset),
-      const Offset(inset, inset + cornerLength),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(size.width - inset, inset),
-      Offset(size.width - inset - cornerLength, inset),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(size.width - inset, inset),
-      Offset(size.width - inset, inset + cornerLength),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(inset, size.height - inset),
-      Offset(inset + cornerLength, size.height - inset),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(inset, size.height - inset),
-      Offset(inset, size.height - inset - cornerLength),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(size.width - inset, size.height - inset),
-      Offset(size.width - inset - cornerLength, size.height - inset),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(size.width - inset, size.height - inset),
-      Offset(size.width - inset, size.height - inset - cornerLength),
-      paint,
-    );
+    canvas.drawLine(const Offset(inset, inset), const Offset(inset + cornerLength, inset), paint);
+    canvas.drawLine(const Offset(inset, inset), const Offset(inset, inset + cornerLength), paint);
+    canvas.drawLine(Offset(size.width - inset, inset), Offset(size.width - inset - cornerLength, inset), paint);
+    canvas.drawLine(Offset(size.width - inset, inset), Offset(size.width - inset, inset + cornerLength), paint);
+    canvas.drawLine(Offset(inset, size.height - inset), Offset(inset + cornerLength, size.height - inset), paint);
+    canvas.drawLine(Offset(inset, size.height - inset), Offset(inset, size.height - inset - cornerLength), paint);
+    canvas.drawLine(Offset(size.width - inset, size.height - inset), Offset(size.width - inset - cornerLength, size.height - inset), paint);
+    canvas.drawLine(Offset(size.width - inset, size.height - inset), Offset(size.width - inset, size.height - inset - cornerLength), paint);
   }
 
   @override
-  bool shouldRepaint(covariant _ScannerCornerPainter oldDelegate) {
-    return oldDelegate.color != color;
-  }
+  bool shouldRepaint(covariant _ScannerCornerPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _ScanActionPanel extends StatelessWidget {
   final bool hasScan;
   final bool isScanning;
+  final bool scanFailed;
   final VoidCallback onScan;
   final VoidCallback onValidate;
   final VoidCallback onReset;
+  final VoidCallback onPickFile;
 
   const _ScanActionPanel({
     required this.hasScan,
     required this.isScanning,
+    required this.scanFailed,
     required this.onScan,
     required this.onValidate,
     required this.onReset,
+    required this.onPickFile,
   });
 
   @override
@@ -475,9 +480,8 @@ class _ScanActionPanel extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF132238),
                 foregroundColor: Colors.white,
-                disabledBackgroundColor: const Color(
-                  0xFF132238,
-                ).withValues(alpha: 0.45),
+                disabledBackgroundColor:
+                    const Color(0xFF132238).withValues(alpha: 0.45),
                 padding: const EdgeInsets.symmetric(vertical: 15),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18),
@@ -490,11 +494,31 @@ class _ScanActionPanel extends StatelessWidget {
               ),
               label: Text(
                 isScanning
-                    ? 'Ouverture du scanner...'
+                    ? 'Ouverture de la caméra...'
                     : hasScan
-                    ? 'Reprendre le scan'
-                    : 'Lancer le scan',
+                        ? 'Reprendre le scan'
+                        : 'Lancer le scan',
                 style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onPickFile,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF2B7FFF),
+                side: const BorderSide(color: Color(0xFF2B7FFF)),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+              icon: const Icon(Icons.upload_file_outlined),
+              label: const Text(
+                'Importer depuis l\'appareil',
+                style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
           ),
@@ -551,7 +575,7 @@ class _ScanHelpBubble extends StatelessWidget {
       icon: Icons.tips_and_updates_outlined,
       title: 'Conseil de scan',
       message:
-          'Posez le document a plat, gardez les bords visibles et evitez les ombres pour obtenir une image nette.',
+          'Posez le document à plat, gardez les bords visibles et évitez les ombres pour obtenir une image nette.',
       color: const Color(0xFF2B7FFF),
     );
   }
@@ -607,7 +631,8 @@ class _ScanStatusCard extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   message,
-                  style: const TextStyle(color: Color(0xFF526072), height: 1.4),
+                  style:
+                      const TextStyle(color: Color(0xFF526072), height: 1.4),
                 ),
               ],
             ),
@@ -629,19 +654,19 @@ class _ScanTips extends StatelessWidget {
         ? const [
             _TipItem(
               icon: Icons.visibility_outlined,
-              label: 'Apercu verifie',
+              label: 'Aperçu vérifié',
               color: Color(0xFF2B7FFF),
             ),
             _TipItem(
               icon: Icons.folder_open_outlined,
-              label: 'Pret pour le dossier',
+              label: 'Prêt pour le dossier',
               color: Color(0xFFF39C12),
             ),
           ]
         : const [
             _TipItem(
               icon: Icons.light_mode_outlined,
-              label: 'Bonne lumiere',
+              label: 'Bonne lumière',
               color: Color(0xFFF39C12),
             ),
             _TipItem(
@@ -667,7 +692,7 @@ class _ScanTips extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Controle rapide',
+            'Contrôle rapide',
             style: TextStyle(
               color: Color(0xFF132238),
               fontSize: 17,

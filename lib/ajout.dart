@@ -1,9 +1,44 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:gestion_locative/app_background.dart';
 import 'package:gestion_locative/locataire.dart';
 import 'package:gestion_locative/scan.dart';
+
+class _Property {
+  final String? id;
+  final String title;
+  final String type;
+  final String location;
+  final int priceNumber;
+
+  _Property({
+    this.id,
+    required this.title,
+    required this.type,
+    required this.location,
+    required this.priceNumber,
+  });
+
+  factory _Property.fromMap(Map<String, dynamic> map) {
+    return _Property(
+      id: map['id'],
+      title: map['title'] ?? '',
+      type: map['type'] ?? '',
+      location: map['location'] ?? '',
+      priceNumber: map['priceNumber'] ?? 0,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _Property && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
 
 class _C {
   static const navy = Color(0xFF1A2B5E);
@@ -37,8 +72,11 @@ class _AjoutState extends State<Ajout> {
   final _contactController = TextEditingController();
   final _notesController = TextEditingController();
 
+  _Property? selectedProperty;
+
   String _selectedStatus = 'A jour';
   String? _scannedFolderLabel;
+  String? tenantId;
 
   @override
   void dispose() {
@@ -52,6 +90,36 @@ class _AjoutState extends State<Ajout> {
     _notesController.dispose();
     super.dispose();
   }
+
+  // ── Étape 2 : Scanner un document ──
+  Future<void> _scanDocument(String type) async {
+    final downloadUrl = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const Scan()),
+    );
+
+    if (downloadUrl != null && tenantId != null) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('locataires')
+          .doc(tenantId)
+          .collection('documents')
+          .add({
+        'type': type,
+        'url': downloadUrl,
+        'uploadedAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Document $type scanné et ajouté au dossier !')),
+      );
+    }
+  } // ← accolade fermante de _scanDocument (était manquante)
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -101,57 +169,73 @@ class _AjoutState extends State<Ajout> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        await FirebaseFirestore.instance
+        final docRef = await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
             .collection('locataires')
             .add({...tenantData, 'createdAt': FieldValue.serverTimestamp()});
-      }
 
-      if (!mounted) return;
+        // ➜ Sauvegarder l'ID pour rattacher les documents
+        tenantId = docRef.id;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$name ajouté avec succès !'),
-          backgroundColor: _C.success,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+        // ➜ Mettre à jour le bien choisi comme "Loué"
+        if (selectedProperty?.id != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('biens')
+              .doc(selectedProperty!.id)
+              .update({
+            'isRented': true,
+            'tenantName': name,
+          });
+        }
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$name ajouté avec succès !'),
+            backgroundColor: _C.success,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
-        ),
-      );
+        );
 
-      final tenantRecord = TenantRecord(
-        name: name,
-        roomNumber: room,
-        propertyName: property,
-        phone: phone,
-        email: email,
-        rentAmount: '$rent FCFA',
-        statusLabel: _selectedStatus,
-        statusColor: _statusColorFor(_selectedStatus),
-        balanceLabel: _statusMetaFor(_selectedStatus),
-        occupationLabel: 'Ajouté le $dateLabel',
-        contract: TenantDocument(
-          title: 'Contrat $room',
-          reference: 'CTR-$room-${DateTime.now().year}',
-          dateLabel: 'Créé le $dateLabel',
-          state: 'Nouveau',
-        ),
-        inventory: TenantDocument(
-          title: 'État des lieux $room',
-          reference: 'EDL-$room-${DateTime.now().year}',
-          dateLabel: 'À programmer',
-          state: 'À faire',
-        ),
-        paymentSummary: 'Dossier créé, première échéance à planifier',
-        notes: notes.isEmpty ? 'Aucune note ajoutée pour le moment.' : notes,
-        emergencyContact: emergencyContact.isEmpty
-            ? 'Contact urgence non renseigné'
-            : 'Contact urgence : $emergencyContact',
-      );
+        final tenantRecord = TenantRecord(
+          name: name,
+          roomNumber: room,
+          propertyName: property,
+          phone: phone,
+          email: email,
+          rentAmount: '$rent FCFA',
+          statusLabel: _selectedStatus,
+          statusColor: _statusColorFor(_selectedStatus),
+          balanceLabel: _statusMetaFor(_selectedStatus),
+          occupationLabel: 'Ajouté le $dateLabel',
+          contract: TenantDocument(
+            title: 'Contrat $room',
+            reference: 'CTR-$room-${DateTime.now().year}',
+            dateLabel: 'Créé le $dateLabel',
+            state: 'Nouveau',
+          ),
+          inventory: TenantDocument(
+            title: 'État des lieux $room',
+            reference: 'EDL-$room-${DateTime.now().year}',
+            dateLabel: 'À programmer',
+            state: 'À faire',
+          ),
+          paymentSummary: 'Dossier créé, première échéance à planifier',
+          notes: notes.isEmpty ? 'Aucune note ajoutée pour le moment.' : notes,
+          emergencyContact: emergencyContact.isEmpty
+              ? 'Contact urgence non renseigné'
+              : 'Contact urgence : $emergencyContact',
+        );
 
-      if (mounted) Navigator.of(context).pop(tenantRecord);
+        if (mounted) Navigator.of(context).pop(tenantRecord);
+      }
     } on FirebaseException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -240,6 +324,7 @@ class _AjoutState extends State<Ajout> {
                 color: Color(0xFF132238),
               ),
             ),
+            SizedBox(height: 4), // ← doublon supprimé
             Text(
               'Nouveau dossier',
               style: TextStyle(fontSize: 12, color: Color(0xFF607086)),
@@ -341,39 +426,73 @@ class _AjoutState extends State<Ajout> {
                           validator: _requiredValidator,
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _Field(
-                                controller: _roomController,
-                                label: 'Chambre',
-                                icon: Icons.meeting_room_outlined,
-                                validator: _requiredValidator,
+
+                        // Champ Bien loué avec liste des biens disponibles
+                        StreamBuilder<QuerySnapshot>(
+                          stream: FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(FirebaseAuth.instance.currentUser!.uid)
+                              .collection('biens')
+                              .where('isRented', isEqualTo: false)
+                              .snapshots(),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData) {
+                              return const CircularProgressIndicator();
+                            }
+
+                            final availableProperties = snapshot.data!.docs
+                                .map((doc) => _Property.fromMap({
+                                      ...(doc.data() as Map<String, dynamic>),
+                                      'id': doc.id,
+                                    }))
+                                .toList();
+
+                            return DropdownButtonFormField<_Property>(
+                              value: selectedProperty,
+                              items: availableProperties.map((p) {
+                                return DropdownMenuItem(
+                                  value: p,
+                                  child: Text('${p.title} - ${p.location}'),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  selectedProperty = value;
+                                  _propertyController.text = value!.title;
+                                  _roomController.text = value.type;
+                                  _rentController.text =
+                                      value.priceNumber.toString();
+                                });
+                              },
+                              decoration: const InputDecoration(
+                                labelText: 'Bien loué',
+                                prefixIcon:
+                                    Icon(Icons.home_work_outlined),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _Field(
-                                controller: _rentController,
-                                label: 'Loyer (FCFA)',
-                                icon: Icons.payments_outlined,
-                                keyboardType: TextInputType.number,
-                                validator: _requiredValidator,
-                              ),
-                            ),
-                          ],
+                            );
+                          },
+                        ),
+
+                        const SizedBox(height: 12),
+                        _Field(
+                          controller: _rentController,
+                          label: 'Loyer (FCFA)',
+                          icon: Icons.payments_outlined,
+                          keyboardType: TextInputType.number,
+                          validator: _requiredValidator,
                         ),
                         const SizedBox(height: 12),
                         _Field(
-                          controller: _propertyController,
-                          label: 'Bien loué',
-                          icon: Icons.home_work_outlined,
+                          controller: _roomController,
+                          label: 'Chambre',
+                          icon: Icons.meeting_room_outlined,
                           validator: _requiredValidator,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+
+                  const SizedBox(height: 20),
 
                   // ── Section 2 : Coordonnées ──
                   _SectionCard(
@@ -416,7 +535,6 @@ class _AjoutState extends State<Ajout> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Statut
                         const Text(
                           'Statut initial',
                           style: TextStyle(
@@ -439,7 +557,8 @@ class _AjoutState extends State<Ajout> {
                           decoration: BoxDecoration(
                             color: const Color(0xFFF0F4FA),
                             borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: const Color(0xFFDDEAF8)),
+                            border:
+                                Border.all(color: const Color(0xFFDDEAF8)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -480,7 +599,8 @@ class _AjoutState extends State<Ajout> {
                                       ),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFF132238),
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       child: const Row(
                                         children: [
@@ -603,14 +723,12 @@ class _AjoutState extends State<Ajout> {
   // ── Helpers ──
 
   String? _requiredValidator(String? value) {
-    if (value == null || value.trim().isEmpty)
-      return 'Ce champ est obligatoire';
+    if (value == null || value.trim().isEmpty) return 'Ce champ est obligatoire';
     return null;
   }
 
   String? _emailValidator(String? value) {
-    if (value == null || value.trim().isEmpty)
-      return 'Ce champ est obligatoire';
+    if (value == null || value.trim().isEmpty) return 'Ce champ est obligatoire';
     if (!value.contains('@') || !value.contains('.')) {
       return 'Veuillez saisir un email valide';
     }
@@ -619,18 +737,8 @@ class _AjoutState extends State<Ajout> {
 
   String _todayLabel() {
     const months = [
-      'janvier',
-      'février',
-      'mars',
-      'avril',
-      'mai',
-      'juin',
-      'juillet',
-      'août',
-      'septembre',
-      'octobre',
-      'novembre',
-      'décembre',
+      'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+      'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
     ];
     final now = DateTime.now();
     return '${now.day} ${months[now.month - 1]} ${now.year}';
@@ -695,7 +803,6 @@ class _SectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // En-tête section
           Row(
             children: [
               Container(
