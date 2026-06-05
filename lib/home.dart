@@ -69,10 +69,7 @@ class _HomeState extends State<Home> with TickerProviderStateMixin {
       if (mounted) setState(() => _activePills = 3);
     });
 
-    Future.delayed(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/connect');
-    });
+    // Removed automatic navigation to '/connect' to keep the Home screen visible.
   }
 
   @override
