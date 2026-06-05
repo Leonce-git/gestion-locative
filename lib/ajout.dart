@@ -971,7 +971,6 @@ class _StatusSelector extends StatelessWidget {
     );
   }
 }
-
 class _StatusOption {
   final String label;
   final Color color;

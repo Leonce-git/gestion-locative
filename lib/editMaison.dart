@@ -6,7 +6,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-
 class EditMaison extends StatefulWidget {
   final Map<String, dynamic> propertyData;
   final String propertyId;
@@ -46,7 +45,6 @@ class _EditMaisonState extends State<EditMaison> {
     _descController.dispose();
     super.dispose();
   }
-
   // Sélection d'image (galerie ou caméra)
   Future<void> _pickImage(ImageSource source) async {
     final pickedFile = await _picker.pickImage(source: source, imageQuality: 70);
@@ -59,7 +57,6 @@ class _EditMaisonState extends State<EditMaison> {
       }
     }
   }
-
   // Upload pour le web (bytes)
   Future<String?> _uploadImageBytes(Uint8List bytes, String userId) async {
     final ref = FirebaseStorage.instance.ref().child(
